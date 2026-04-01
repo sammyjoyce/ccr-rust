@@ -1,22 +1,24 @@
 # CCR-Rust
 
-> **Universal AI coding proxy.** Route Codex CLI or Claude Code through multiple LLM providers with automatic failover.
+> **Universal AI coding proxy.** Route Claude Code—and other Anthropic/OpenAI-compatible clients—through multiple LLM providers with automatic failover.
 
 - **Automatic failover** — Tier 0 rate-limited? Falls back to Tier 1, then Tier 2
-- **Same interface** — Just set an environment variable, no workflow changes
+- **Compatible HTTP APIs** — Exposes Anthropic Messages plus OpenAI-compatible Chat Completions and Responses endpoints
 - **Task-based routing** — Fast models for code gen, reasoning models for complex refactors
 - **Cost control** — Cheaper providers by default, expensive ones as fallback
+
+> **Compatibility note:** Claude Code is the verified frontend today. CCR-Rust also exposes `/v1/chat/completions`, `/v1/responses`, and `/v1/models`, and those HTTP/SSE paths are covered by internal tests. Modern Codex CLI support has not been re-validated recently, so treat it as experimental rather than “full support”.
 
 ## Supported Providers
 
 | Provider | Models | Best For |
 |----------|--------|----------|
-| **Z.AI (GLM)** | GLM-5 | Fast code generation, daily driver |
-| **Qwen (Alibaba)** | Qwen-Coder, Qwen-Plus | Code generation, multi-language support |
+| **Z.AI (GLM)** | GLM-5.1 (`glm-5` on some accounts) | Fast code generation, daily driver |
+| **Qwen (Alibaba)** | `qwen3-coder-next`, `qwen3.5-plus` | Code generation, multi-language support |
 | **DeepSeek** | deepseek-chat, deepseek-reasoner | Deep reasoning, complex refactors |
-| **MiniMax** | MiniMax-M2.5 | High-performance reasoning |
+| **MiniMax** | MiniMax-M2.7 | High-performance reasoning |
 | **Kimi (Moonshot)** | Kimi K2.5 | Extended context (1M+ tokens) |
-| **Google Gemini** | gemini-3-flash-preview | Context compression, summarization |
+| **Google Gemini** | `gemini-3.1-pro-preview` | Large-context reasoning, documentation, repo-scale synthesis |
 | **OpenRouter** | 200+ models | Fallback to anything |
 
 ### Coding Plan Discounts
@@ -31,22 +33,23 @@ Several providers offer subscription plans with better rates than pay-as-you-go:
 | DeepSeek | Pay-as-you-go | Usage-based pricing |
 | OpenRouter | Pay-as-you-go | Usage-based pricing |
 
-## Works With Both Leading Assistants
+## Frontend Compatibility
 
 | Frontend | Setup | Status |
 |----------|-------|--------|
-| **Codex CLI** | `export OPENAI_BASE_URL=http://127.0.0.1:3456/v1` | ✅ Full support |
-| **Claude Code** | `export ANTHROPIC_BASE_URL=http://127.0.0.1:3456` | ✅ Full support |
+| **Claude Code** | `export ANTHROPIC_BASE_URL=http://127.0.0.1:3456` | ✅ Recommended |
+| **OpenAI-compatible apps / SDKs** | Point them at `http://127.0.0.1:3456/v1` | ✅ Supported over HTTP |
+| **Codex CLI** | Use current Codex `config.toml` provider settings if experimenting | ⚠️ Experimental / unverified |
 
 ## How It Works
 
-1. Your assistant (Codex/Claude) sends a request to `localhost:3456`
-2. CCR-Rust tries Tier 0 (e.g., GLM-5)
+1. Your assistant or client sends a request to `localhost:3456`
+2. CCR-Rust tries Tier 0 (e.g., GLM-5.1)
 3. If that fails (rate limit, timeout, error), it retries on Tier 1 (e.g., DeepSeek)
 4. Still failing? Tier 2 (e.g., MiniMax), and so on
-5. Response goes back to your assistant—same format it expected
+5. Response goes back in the protocol your client expects
 
-All transparent. No workflow changes.
+All transparent for supported clients.
 
 ---
 
@@ -72,7 +75,7 @@ Create `~/.claude-code-router/config.json`:
             "name": "zai",
             "api_base_url": "https://api.z.ai/api/coding/paas/v4",
             "api_key": "YOUR_ZAI_API_KEY",
-            "models": ["glm-5"],
+            "models": ["glm-5.1", "glm-5"],
             "transformer": { "use": ["anthropic"] }
         },
         {
@@ -84,11 +87,13 @@ Create `~/.claude-code-router/config.json`:
         }
     ],
     "Router": {
-        "default": "zai,glm-5",
+        "default": "zai,glm-5.1",
         "think": "deepseek,deepseek-reasoner"
     }
 }
 ```
+
+If your Z.AI account still exposes `glm-5` instead of `glm-5.1`, use `zai,glm-5` for the route and leave both model IDs in the provider list.
 
 ### 3. Run
 
@@ -96,22 +101,29 @@ Create `~/.claude-code-router/config.json`:
 ccr-rust start
 ```
 
-### 4. Connect Your Assistant
+### 4. Connect Your Assistant or Client
 
-**Codex CLI:**
-```bash
-export OPENAI_BASE_URL=http://127.0.0.1:3456/v1
-export OPENAI_API_KEY=dummy  # Any non-empty string works
-codex
-```
-
-**Claude Code:**
+**Claude Code (recommended):**
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
 claude
 ```
 
-That's it. Your frontend now routes through CCR-Rust with automatic fallback.
+**OpenAI-compatible apps / SDKs:**
+
+- Base URL: `http://127.0.0.1:3456/v1`
+- API key: any non-empty string
+- Supported endpoints: `/v1/chat/completions`, `/v1/responses`, `/v1/models`
+
+**Codex CLI (experimental):**
+
+Current Codex releases are configured through `~/.codex/config.toml` using `openai_base_url` or custom `model_providers`, not the older env-var-only flow that earlier versions of this README showed. Because CCR-Rust currently documents only HTTP/SSE endpoints and does not advertise WebSocket transport, we do not currently claim turnkey Codex support. If you want to experiment, follow the official Codex configuration docs and verify your workflow end-to-end:
+
+- [CCR-Rust Codex setup guide](docs/codex_setup.md)
+- [Advanced Configuration](https://developers.openai.com/codex/config-advanced)
+- [Configuration Reference](https://developers.openai.com/codex/config-reference)
+
+That's it for the verified HTTP clients. You still get automatic fallback with no app-side routing logic.
 
 ---
 
@@ -155,7 +167,7 @@ The `transformer` field is optional. Common uses:
             "name": "zai",
             "api_base_url": "https://api.z.ai/api/coding/paas/v4",
             "api_key": "sk-xxx",
-            "models": ["glm-5"],
+            "models": ["glm-5.1", "glm-5"],
             "transformer": { "use": ["anthropic"] }
         },
         {
@@ -169,11 +181,11 @@ The `transformer` field is optional. Common uses:
             "name": "minimax",
             "api_base_url": "https://api.minimax.io/v1",
             "api_key": "sk-xxx",
-            "models": ["MiniMax-M2.5"]
+            "models": ["MiniMax-M2.7"]
         }
     ],
     "Router": {
-        "default": "zai,glm-5",
+        "default": "zai,glm-5.1",
         "think": "deepseek,deepseek-reasoner"
     }
 }
@@ -215,7 +227,7 @@ For automated agent workloads, disable streaming to avoid SSE frame parsing erro
 
 ### Enforce Tier Order
 
-Clients like Codex CLI cache the last successful model. If a request falls back to `openrouter,aurora-alpha`, subsequent requests will target that tier directly, bypassing cheaper tiers.
+Some clients, including Codex CLI, cache the last successful model. If a request falls back to `openrouter,aurora-alpha`, subsequent requests will target that tier directly, bypassing cheaper tiers.
 
 To force all requests to start from tier 0:
 
@@ -253,6 +265,8 @@ For long-running dashboards/metrics that survive restarts:
 | `/v1/chat/completions` | OpenAI Chat Completions | `stream: false` |
 | `/v1/responses` | OpenAI Responses API | `stream: true` |
 
+These are the maintained compatibility surfaces today. CCR-Rust currently documents HTTP/SSE endpoints only; if a client expects additional transports or provider-specific behavior, validate it before relying on it.
+
 For detailed streaming behavior and failure semantics, see [docs/streaming.md](docs/streaming.md).
 
 ---
@@ -277,7 +291,7 @@ cargo build --release # Build release binary
 ## Advanced Topics
 
 - [Presets](docs/presets.md) — Named routing presets for different workloads
-- [Gemini Integration](docs/gemini-integration.md) — Context compression with Gemini Flash
+- [Gemini Integration](docs/gemini-integration.md) — Gemini 3.1 Pro for large-context reasoning and documentation
 - [Qwen Coding Plan](docs/qwen-coding-plan.md) — Alibaba Cloud's subscription plan for coding
 - [Observability](docs/observability.md) — Prometheus metrics, token drift monitoring
 - [Deployment](docs/deployment.md) — Docker, Kubernetes, systemd

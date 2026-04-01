@@ -1,35 +1,19 @@
 # Gemini Integration
 
-CCR-Rust supports Google Gemini models through direct API access, enabling powerful context compression and long-context handling capabilities.
+CCR-Rust supports Google Gemini models through direct API access, enabling large-context reasoning, documentation synthesis, and repo-scale analysis workflows.
 
-## Why Gemini Flash?
+## Why Gemini 3.1 Pro?
 
-Gemini Flash models excel at **context compression** and **information coalescence**:
+Gemini 3.1 Pro is Google's preview reasoning-first Gemini model with a 1M-token context window, which makes it a strong fit for high-context coding and documentation tasks:
 
 | Capability | Benefit |
 |------------|---------|
 | **1M+ token context** | Process entire conversation histories, codebases, or documents |
-| **Intelligent summarization** | Compress 100K+ tokens into actionable summaries without losing critical details |
+| **High-quality reasoning** | Better synthesis for code review, migration planning, and design documents |
 | **Cross-session handoffs** | Prepare context packages for agent handoffs or restarts |
-| **Document compression** | Multi-hour agent sessions → concise delta reports |
+| **Document synthesis** | Turn multi-hour agent sessions into concise, structured delta reports |
 
-### Cost Savings Example
-
-Without context compression, a 200K token conversation forwarded to an expensive reasoning model:
-
-```
-200K input tokens × $3.00/1M tokens = $0.60 per request
-```
-
-With Gemini Flash compression first (compress to 20K tokens):
-
-```
-200K tokens × Gemini Flash ($0.075/1M) = $0.015
-+ 20K tokens × Reasoning Model ($3.00/1M) = $0.06
-= $0.075 total (87.5% savings)
-```
-
-For a system running 1000+ requests/day, this saves **$500+/day**.
+If you want the cheapest possible compression layer, use a Flash-family Gemini model instead. This guide focuses on the higher-capability `gemini-3.1-pro-preview` route.
 
 ## Configuration
 
@@ -51,13 +35,13 @@ GEMINI_API_KEY=your-gemini-api-key-here
             "name": "gemini",
             "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
             "api_key": "${GEMINI_API_KEY}",
-            "models": ["gemini-3-flash-preview"],
+            "models": ["gemini-3.1-pro-preview"],
             "transformer": { "use": ["anthropic"] }
         }
     ],
     "Presets": {
         "documentation": {
-            "route": "gemini,gemini-3-flash-preview"
+            "route": "gemini,gemini-3.1-pro-preview"
         }
     }
 }
@@ -76,7 +60,7 @@ You can hardcode the key directly (not recommended for shared repos):
             "name": "gemini",
             "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
             "api_key": "AIza...",
-            "models": ["gemini-3-flash-preview"]
+            "models": ["gemini-3.1-pro-preview"]
         }
     ]
 }
@@ -103,8 +87,8 @@ ccr-rust start
 
 | Model | Context Window | Best For |
 |-------|----------------|----------|
-| `gemini-3-flash-preview` | 1M+ tokens | Context compression, documentation, summarization |
-| `gemini-2.5-flash` | 1M+ tokens | General-purpose with compression |
+| `gemini-3.1-pro-preview` | 1M tokens | Repo-scale reasoning, documentation, and complex coding workflows |
+| `gemini-3.1-pro-preview-customtools` | 1M tokens | Agentic workflows that lean heavily on custom tools and bash |
 
 Check [Google AI Studio](https://ai.google.dev/gemini-api/docs/models) for the latest available models.
 
@@ -116,11 +100,11 @@ Create a preset for easy access:
 {
     "Presets": {
         "documentation": {
-            "route": "gemini,gemini-3-flash-preview",
+            "route": "gemini,gemini-3.1-pro-preview",
             "temperature": 0.3
         },
         "compression": {
-            "route": "gemini,gemini-3-flash-preview",
+            "route": "gemini,gemini-3.1-pro-preview",
             "max_tokens": 8192
         }
     }
@@ -194,7 +178,7 @@ docker run -e GEMINI_API_KEY=your-key ccr-rust
 {
     "Router": {
         "default": "deepseek,deepseek-reasoner",
-        "compression": "gemini,gemini-3-flash-preview"
+        "compression": "gemini,gemini-3.1-pro-preview"
     }
 }
 ```
@@ -212,7 +196,7 @@ When an agent session needs to continue on a different machine/process:
 {
     "Presets": {
         "handoff": {
-            "route": "gemini,gemini-3-flash-preview",
+            "route": "gemini,gemini-3.1-pro-preview",
             "system": "Compress the conversation history into a structured handoff document..."
         }
     }
@@ -227,7 +211,7 @@ After an agent modifies 50+ files:
 {
     "Presets": {
         "summarize": {
-            "route": "gemini,gemini-3-flash-preview",
+            "route": "gemini,gemini-3.1-pro-preview",
             "max_tokens": 4096
         }
     }
@@ -250,7 +234,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_KEY"
 ### Model Not Found
 
 ```
-Error: Model 'gemini-3-flash-preview' not found
+Error: Model 'gemini-3.1-pro-preview' not found
 ```
 
 List available models:

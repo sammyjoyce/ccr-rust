@@ -23,7 +23,7 @@
             "api_base_url": "https://api.minimax.io/v1",
             "api_key": "${MINIMAX_API_KEY}",
             "models": [
-                "MiniMax-M2.5"
+                "MiniMax-M2.7"
             ],
             "transformer": {
                 "use": [
@@ -50,7 +50,7 @@
             "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
             "api_key": "${GEMINI_API_KEY}",
             "models": [
-                "gemini-3-flash-preview"
+                "gemini-3.1-pro-preview"
             ],
             "transformer": {
                 "use": [
@@ -64,8 +64,8 @@
             "api_base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
             "api_key": "${QWEN_API_KEY}",
             "models": [
-                "qwen3-coder-plus",
-                "qwen3-max-2026-01-23"
+                "qwen3-coder-next",
+                "qwen3.5-plus"
             ],
             "transformer": {
                 "use": [
@@ -80,7 +80,7 @@
         "background": "deepseek,deepseek-chat",
         "tiers": [
             "deepseek,deepseek-reasoner",
-            "minimax,MiniMax-M2.5",
+            "minimax,MiniMax-M2.7",
             "openrouter,openrouter/aurora-alpha"
         ]
     },
@@ -93,7 +93,7 @@
             "route": "deepseek,deepseek-reasoner"
         },
         "documentation": {
-            "route": "gemini,gemini-3-flash-preview"
+            "route": "gemini,gemini-3.1-pro-preview"
         }
     },
     "Frontend": {

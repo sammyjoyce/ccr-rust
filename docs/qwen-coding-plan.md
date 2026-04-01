@@ -6,17 +6,17 @@ CCR-Rust supports Alibaba Cloud Model Studio's **Coding Plan** subscription, ena
 
 Coding Plan is an AI coding subscription service from Alibaba Cloud Model Studio. It provides:
 
-- **Latest Qwen models**: `qwen3-coder-plus` (code generation), `qwen3-max-2026-01-23` (reasoning)
-- **Fixed monthly pricing**: $10/month (Lite) or $50/month (Pro)
-- **Monthly quota**: Up to 18,000 requests (Lite) or 90,000 requests (Pro)
+- **Latest Qwen models**: `qwen3-coder-next` (latest coding-focused model), `qwen3.5-plus` (recommended general model)
+- **Fixed monthly pricing**: Pro at $50/month; Lite is legacy-only and no longer accepts new subscriptions
+- **Monthly quota**: Up to 90,000 requests per month on Pro
 - **Compatible with**: Claude Code, Cline, Qwen Code, OpenClaw
 
 ## Supported Models
 
 | Model | Best For |
 |-------|----------|
-| `qwen3-coder-plus` | Code generation, refactoring, tool calling |
-| `qwen3-max-2026-01-23` | Complex reasoning, multi-step analysis |
+| `qwen3-coder-next` | Code generation, refactoring, tool calling |
+| `qwen3.5-plus` | General coding assistance, reasoning, and longer planning |
 
 ## Getting Started
 
@@ -53,16 +53,16 @@ Add the provider to `~/.claude-code-router/config.json`:
             "name": "qwen",
             "api_base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
             "api_key": "${QWEN_API_KEY}",
-            "models": ["qwen3-coder-plus", "qwen3-max-2026-01-23"],
+            "models": ["qwen3-coder-next", "qwen3.5-plus"],
             "transformer": { "use": ["anthropic"] },
             "tier_name": "ccr-qwen"
         }
     ],
     "Router": {
         "tiers": [
-            "zai,glm-5",
-            "qwen,qwen3-coder-plus",
-            "minimax,MiniMax-M2.5",
+            "zai,glm-5.1",
+            "qwen,qwen3-coder-next",
+            "minimax,MiniMax-M2.7",
             "deepseek,deepseek-reasoner"
         ]
     }
@@ -81,7 +81,7 @@ Add the provider to `~/.claude-code-router/config.json`:
 curl -X POST http://localhost:3456/v1/messages \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
-  -d '{"model":"qwen,qwen3-coder-plus","max_tokens":50,"messages":[{"role":"user","content":"Hello"}]}'
+    -d '{"model":"qwen,qwen3-coder-next","max_tokens":50,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 ## API Endpoints
@@ -103,12 +103,12 @@ CCR-Rust uses `provider,model` syntax for direct routing:
 # Route to Qwen Coder
 curl -X POST http://localhost:3456/v1/messages \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen,qwen3-coder-plus",...}'
+    -d '{"model":"qwen,qwen3-coder-next",...}'
 
-# Route to Qwen Max (reasoning)
+# Route to Qwen 3.5 Plus (reasoning / planning)
 curl -X POST http://localhost:3456/v1/messages \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen,qwen3-max-2026-01-23",...}'
+    -d '{"model":"qwen,qwen3.5-plus",...}'
 ```
 
 ## Preset Configuration
@@ -119,11 +119,11 @@ Create presets for common use cases:
 {
     "Presets": {
         "coding_qwen": {
-            "route": "qwen,qwen3-coder-plus",
+            "route": "qwen,qwen3-coder-next",
             "temperature": 0.7
         },
         "reasoning_qwen": {
-            "route": "qwen,qwen3-max-2026-01-23"
+            "route": "qwen,qwen3.5-plus"
         }
     }
 }
@@ -158,9 +158,9 @@ Recommended tier position for balanced routing:
 {
     "Router": {
         "tiers": [
-            "zai,glm-5",           // Tier 0: Primary (Z.AI GLM-5)
-            "qwen,qwen3-coder-plus", // Tier 1: Qwen Coder
-            "minimax,MiniMax-M2.5", // Tier 2: Minimax
+            "zai,glm-5.1",           // Tier 0: Primary (Z.AI GLM-5.1)
+            "qwen,qwen3-coder-next", // Tier 1: Qwen Coder
+            "minimax,MiniMax-M2.7", // Tier 2: MiniMax
             "deepseek,deepseek-reasoner" // Tier 3: DeepSeek
         ]
     }
@@ -194,7 +194,7 @@ Error: invalid_api_key
 source .env && curl -X POST "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions" \
   -H "Authorization: Bearer $QWEN_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3-coder-plus","messages":[{"role":"user","content":"test"}]}'
+    -d '{"model":"qwen3-coder-next","messages":[{"role":"user","content":"test"}]}'
 ```
 
 ### Not Routing to Qwen
@@ -208,7 +208,7 @@ If requests fall through to other tiers instead of Qwen:
 
 2. Use explicit `provider,model` routing:
    ```json
-   {"model": "qwen,qwen3-coder-plus", ...}
+    {"model": "qwen,qwen3-coder-next", ...}
    ```
 
 3. Check logs for routing decisions:
@@ -240,23 +240,23 @@ Quotas reset automatically (5-hour: rolling, weekly: Monday 00:00 UTC+8, monthly
             "name": "qwen",
             "api_base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
             "api_key": "${QWEN_API_KEY}",
-            "models": ["qwen3-coder-plus", "qwen3-max-2026-01-23"],
+            "models": ["qwen3-coder-next", "qwen3.5-plus"],
             "transformer": { "use": ["anthropic"] },
             "tier_name": "ccr-qwen"
         }
     ],
     "Router": {
-        "default": "zai,glm-5",
+        "default": "zai,glm-5.1",
         "tiers": [
-            "zai,glm-5",
-            "qwen,qwen3-coder-plus",
-            "minimax,MiniMax-M2.5",
+            "zai,glm-5.1",
+            "qwen,qwen3-coder-next",
+            "minimax,MiniMax-M2.7",
             "deepseek,deepseek-reasoner"
         ]
     },
     "Presets": {
         "coding_qwen": {
-            "route": "qwen,qwen3-coder-plus",
+            "route": "qwen,qwen3-coder-next",
             "temperature": 0.7
         }
     }
@@ -265,6 +265,7 @@ Quotas reset automatically (5-hour: rolling, weekly: Monday 00:00 UTC+8, monthly
 
 ## References
 
-- [Coding Plan Documentation](https://www.alibabacloud.com/help/en/model-studio/coding-plan)
+- [Coding Plan Overview](https://www.alibabacloud.com/help/en/model-studio/coding-plan)
+- [Qwen Code with Coding Plan](https://www.alibabacloud.com/help/en/model-studio/qwen-code-coding-plan)
 - [Qwen-Coder Model Capabilities](https://www.alibabacloud.com/help/en/model-studio/qwen-coder)
 - [Model Studio Console](https://modelstudio.console.alibabacloud.com/)
