@@ -1,0 +1,57 @@
+# Supply chain security policy for CCR-Rust
+# Run: cargo deny check (requires: cargo install cargo-deny)
+
+[graph]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]
+
+[advisories]
+# Deny any crate with a known security advisory
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+# Update the advisory database on every check
+git-fetch-with-cli = true
+
+[licenses]
+# Allow only these licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "OpenSSL",
+    "BSL-1.0",
+]
+copyleft = "deny"
+
+[bans]
+# Deny multiple versions of the same crate
+multiple-versions = "warn"
+wildcards = "deny"
+# Ban known-malicious crates
+deny = [
+    # TeamPCP time utility campaign (Feb-Mar 2026)
+    { crate = "chrono_anchor", wrappers = [] },
+    { crate = "dnp3times", wrappers = [] },
+    { crate = "time_calibrator", wrappers = [] },
+    { crate = "time_calibrators", wrappers = [] },
+    { crate = "time-sync", wrappers = [] },
+    # Crypto wallet stealers
+    { crate = "faster_log", wrappers = [] },
+    { crate = "async_println", wrappers = [] },
+    # Dependency confusion examples
+    { crate = "finch-rust", wrappers = [] },
+    { crate = "sha-rust", wrappers = [] },
+]
+
+[sources]
+# Only allow crates from crates.io
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

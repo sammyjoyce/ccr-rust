@@ -77,6 +77,14 @@ pub struct ConfigFile {
     #[serde(default)]
     #[serde(rename = "DebugCapture")]
     pub debug_capture: DebugCaptureConfig,
+
+    /// Optional Unix socket path for a local broker.
+    /// When set, `with_broker_fallback` will attempt the broker first before
+    /// falling back to a direct HTTP connection.
+    /// Can also be set via the `CCR_BROKER_SOCKET` environment variable.
+    #[serde(default)]
+    #[serde(rename = "BROKER_SOCKET")]
+    pub broker_socket: Option<String>,
 }
 
 /// Runtime configuration shared across all handlers via Axum state.
@@ -129,6 +137,17 @@ impl Config {
     /// Debug capture settings.
     pub fn debug_capture(&self) -> &DebugCaptureConfig {
         &self.inner.file.debug_capture
+    }
+
+    /// Resolve the broker socket path.
+    ///
+    /// Priority: config file `BROKER_SOCKET` field > `CCR_BROKER_SOCKET` env var.
+    pub fn broker_socket(&self) -> Option<String> {
+        self.inner
+            .file
+            .broker_socket
+            .clone()
+            .or_else(|| std::env::var("CCR_BROKER_SOCKET").ok())
     }
 
     /// List all preset names.
@@ -550,8 +569,15 @@ pub struct BatchingConfig {
 
 impl Config {
     pub fn from_file(path: &str) -> Result<Self> {
-        let content =
+        let raw_content =
             fs::read_to_string(path).context(format!("Failed to read config file: {}", path))?;
+        // Expand ${VAR} env var references in config values (e.g., api_key: "${ZAI_API_KEY}")
+        let content = shellexpand::env(&raw_content)
+            .map(|s| s.into_owned())
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to expand env vars in config, using raw: {e}");
+                raw_content.clone()
+            });
         let file: ConfigFile =
             serde_json::from_str(&content).context("Failed to parse config JSON")?;
 

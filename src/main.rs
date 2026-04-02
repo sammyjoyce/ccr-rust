@@ -17,6 +17,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod config {
     pub use ccr_rust::config::*;
 }
+#[cfg(feature = "dashboard")]
 mod dashboard {
     pub use ccr_rust::dashboard::*;
 }
@@ -87,6 +88,7 @@ enum Commands {
     },
     /// Validate config file syntax and providers
     Validate,
+    #[cfg(feature = "dashboard")]
     /// Launch interactive TUI dashboard
     Dashboard {
         /// Tracker host
@@ -514,6 +516,7 @@ async fn main() -> Result<()> {
         Some(Commands::Validate) => {
             validate_config(&config_path)?;
         }
+        #[cfg(feature = "dashboard")]
         Some(Commands::Dashboard { host, port }) => {
             dashboard::run_dashboard(host, port)?;
         }
