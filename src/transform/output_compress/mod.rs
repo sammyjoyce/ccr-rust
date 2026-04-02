@@ -49,10 +49,8 @@ impl Transformer for OutputCompressTransformer {
             if let Some(arr) = content.as_array_mut() {
                 for block in arr {
                     // Only compress tool_result blocks
-                    let is_tool_result = block
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        == Some("tool_result");
+                    let is_tool_result =
+                        block.get("type").and_then(|t| t.as_str()) == Some("tool_result");
                     if !is_tool_result {
                         continue;
                     }
@@ -106,18 +104,14 @@ fn compress_string_value(value: &mut Value) {
         if ratio > MAX_RATIO {
             debug!(
                 original_len,
-                compressed_len,
-                ratio,
-                "compression ratio too high, keeping original"
+                compressed_len, ratio, "compression ratio too high, keeping original"
             );
             return;
         }
 
         debug!(
             original_len,
-            compressed_len,
-            ratio,
-            "compressed tool_result text"
+            compressed_len, ratio, "compressed tool_result text"
         );
         *value = Value::String(compressed);
     }
@@ -185,9 +179,7 @@ mod tests {
             }]
         });
         let result = t.transform_response(resp).unwrap();
-        let compressed = result["content"][0]["content"][0]["text"]
-            .as_str()
-            .unwrap();
+        let compressed = result["content"][0]["content"][0]["text"].as_str().unwrap();
         // Should be shorter than original if patterns match
         assert!(compressed.len() <= repetitive.len());
     }

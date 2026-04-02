@@ -46,7 +46,39 @@ mod tests {
 
     #[test]
     fn test_strip_progress_bars() {
-        assert_eq!(strip_progress_bars("downloading\r50%\r100%\ndone"), "\ndone");
+        assert_eq!(
+            strip_progress_bars("downloading\r50%\r100%\ndone"),
+            "\ndone"
+        );
         assert_eq!(strip_progress_bars("normal line\n"), "normal line\n");
     }
+}
+
+/// Apply all pattern-based compressions to text.
+/// Returns the cleaned/compressed text.
+pub fn compress(text: &str) -> String {
+    // Clean first
+    let cleaned = strip_ansi(text);
+    let cleaned = collapse_blank_lines(&cleaned);
+    let cleaned = strip_progress_bars(&cleaned);
+
+    // Try command-specific patterns (return first match)
+    if let Some(result) = git::try_compress(&cleaned) {
+        return result;
+    }
+    if let Some(result) = cargo::try_compress(&cleaned) {
+        return result;
+    }
+    if let Some(result) = test_runner::try_compress(&cleaned) {
+        return result;
+    }
+    if let Some(result) = npm::try_compress(&cleaned) {
+        return result;
+    }
+    if let Some(result) = grep::try_compress(&cleaned) {
+        return result;
+    }
+
+    // No pattern matched — return cleaned text
+    cleaned
 }

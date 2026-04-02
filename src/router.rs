@@ -3082,53 +3082,37 @@ async fn try_request_via_anthropic_protocol(
     let headers = build_anthropic_headers(provider)?;
     trace!(tier = tier_name, model = model_name, url = %url, "dispatching Anthropic-compatible upstream request");
 
-    // Detect whether the request contains OpenAI-style structures that need
-    // normalization.  OpenAI uses `role: "tool"` for tool results; native
-    // Anthropic uses `tool_result` content blocks instead.  Only requests
-    // originating from Codex/Responses inputs will have the OpenAI shape.
-    let needs_normalization = transformed_request
-        .get("messages")
-        .and_then(|m| m.as_array())
-        .map(|msgs| msgs.iter().any(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("tool")))
-        .unwrap_or(false);
+    let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
+        .map_err(|e| TryRequestError::Other(e.into()))?;
 
-    let (normalized_request_value, request) = if needs_normalization {
-        // Round-trip through OpenAI and run the dedicated OpenAI->Anthropic
-        // transformer to normalize roles/content/tools for Codex inputs.
-        let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
-            .map_err(|e| TryRequestError::Other(e.into()))?;
+    let needs_normalization = request
+        .messages
+        .iter()
+        .any(|message| message.role == "tool");
+
+    // Only canonicalize when OpenAI-style tool result messages are present.
+    // Native Anthropic payloads should skip this round-trip to preserve
+    // provider-specific content blocks (e.g., cache_control, thinking blocks).
+    let mut normalized_request_value = if needs_normalization {
         let openai_request = translate_request_anthropic_to_openai(&request, model_name);
         let openai_request_value =
             serde_json::to_value(openai_request).map_err(|e| TryRequestError::Other(e.into()))?;
-        let mut val = OpenAiToAnthropicTransformer
+        OpenAiToAnthropicTransformer
             .transform_request(openai_request_value)
-            .map_err(TryRequestError::Other)?;
-
-        if let Some(obj) = val.as_object_mut() {
-            obj.insert(
-                "model".to_string(),
-                serde_json::Value::String(model_name.to_string()),
-            );
-        }
-
-        let req: AnthropicRequest = serde_json::from_value(val.clone())
-            .map_err(|e| TryRequestError::Other(e.into()))?;
-        (val, req)
+            .map_err(TryRequestError::Other)?
     } else {
-        // Native Anthropic input (Kimi, Minimax, etc.) — skip the lossy
-        // round-trip to preserve cache_control, thinking blocks, etc.
-        let mut val = transformed_request.clone();
-        if let Some(obj) = val.as_object_mut() {
-            obj.insert(
-                "model".to_string(),
-                serde_json::Value::String(model_name.to_string()),
-            );
-        }
-
-        let req: AnthropicRequest = serde_json::from_value(val.clone())
-            .map_err(|e| TryRequestError::Other(e.into()))?;
-        (val, req)
+        transformed_request
     };
+
+    if let Some(obj) = normalized_request_value.as_object_mut() {
+        obj.insert(
+            "model".to_string(),
+            serde_json::Value::String(model_name.to_string()),
+        );
+    }
+
+    let request: AnthropicRequest = serde_json::from_value(normalized_request_value.clone())
+        .map_err(|e| TryRequestError::Other(e.into()))?;
 
     // Set up capture if enabled for this provider
     let capture_builder = if let Some(ref capture) = debug_capture {

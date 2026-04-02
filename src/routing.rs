@@ -279,10 +279,7 @@ impl EwmaTracker {
             .collect();
 
         // Sort by probability descending
-        probabilities.sort_by(|a, b| {
-            b.2.partial_cmp(&a.2)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        probabilities.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
         if tracing::enabled!(tracing::Level::DEBUG) {
             let order: Vec<String> = probabilities

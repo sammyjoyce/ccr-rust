@@ -4,8 +4,8 @@ use lazy_static::lazy_static;
 use regex::Regex;
 
 lazy_static! {
-    /// Matches grep-style output: `filepath:lineno:content`
-    static ref GREP_LINE_RE: Regex = Regex::new(r"^(.+):(\d+):(.*)$").unwrap();
+    /// Matches grep-style output prefix: `filepath:lineno:`
+    static ref GREP_LINE_RE: Regex = Regex::new(r"^(.+):(\d+):").unwrap();
 }
 
 const THRESHOLD: usize = 50;
@@ -38,7 +38,10 @@ pub fn try_compress(text: &str) -> Option<String> {
     }
 
     let mut out = String::with_capacity(text.len() / 2);
-    out.push_str(&format!("{match_count} matches across {} files:\n\n", file_order.len()));
+    out.push_str(&format!(
+        "{match_count} matches across {} files:\n\n",
+        file_order.len()
+    ));
 
     for file in &file_order {
         let lines = &files[file];
@@ -49,7 +52,10 @@ pub fn try_compress(text: &str) -> Option<String> {
             out.push('\n');
         }
         if lines.len() > LINES_PER_FILE {
-            out.push_str(&format!("  ... and {} more\n", lines.len() - LINES_PER_FILE));
+            out.push_str(&format!(
+                "  ... and {} more\n",
+                lines.len() - LINES_PER_FILE
+            ));
         }
         out.push('\n');
     }
@@ -113,6 +119,17 @@ mod tests {
         let input = lines.join("\n");
         let result = try_compress(&input).unwrap();
         assert!(result.contains("51 matches"));
+    }
+
+    #[test]
+    fn test_detects_prefix_pattern_without_content() {
+        let input = (1..=51)
+            .map(|i| format!("file.rs:{}:", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = try_compress(&input).unwrap();
+        assert!(result.contains("51 matches across 1 files:"));
+        assert!(result.contains("... and 48 more"));
     }
 
     #[test]

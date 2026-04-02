@@ -114,11 +114,11 @@ enum Commands {
         #[arg(long, default_value = "low")]
         level: String,
         #[arg(long = "wrap", num_args = 1)]
-        wrap: Vec<String>,
-        #[arg(long)]
-        include: Option<String>,
-        #[arg(long)]
-        exclude: Option<String>,
+        backends: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        include: Option<Vec<String>>,
+        #[arg(long, value_delimiter = ',')]
+        exclude: Option<Vec<String>>,
     },
     /// List and analyze debug captures.
     Captures {
@@ -528,13 +528,13 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Mcp {
             level,
-            wrap,
+            backends,
             include,
             exclude,
         }) => {
             ccr_rust::mcp::server::run(ccr_rust::mcp::server::McpArgs {
                 level,
-                wrap,
+                backends,
                 include,
                 exclude,
             })

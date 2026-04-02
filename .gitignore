@@ -4,6 +4,9 @@
 *.pdb
 Cargo.lock
 
+# Cargo offline cache
+.cargo-offline/
+
 # Config files with secrets
 config.json
 *.local.json

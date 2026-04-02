@@ -120,6 +120,7 @@ fn build_app(config: ccr_rust::config::Config) -> Router {
         ratelimit_tracker,
         shutdown_timeout: 30,
         debug_capture: None,
+        google_oauth: None,
     };
 
     Router::new()
@@ -295,9 +296,7 @@ async fn test_responses_accepts_zstd_encoded_request_body() {
 
 #[tokio::test]
 async fn test_responses_normalizes_developer_role_for_backend() {
-    if skip_if_localhost_bind_unavailable(
-        "test_responses_normalizes_developer_role_for_backend",
-    ) {
+    if skip_if_localhost_bind_unavailable("test_responses_normalizes_developer_role_for_backend") {
         return;
     }
     let mock_server = MockServer::start().await;
@@ -788,9 +787,7 @@ async fn test_responses_stream_merges_tool_call_deltas_across_chunks() {
 
 #[tokio::test]
 async fn test_responses_stream_complex_mixed_content_and_tools() {
-    if skip_if_localhost_bind_unavailable(
-        "test_responses_stream_complex_mixed_content_and_tools",
-    ) {
+    if skip_if_localhost_bind_unavailable("test_responses_stream_complex_mixed_content_and_tools") {
         return;
     }
     let mock_server = MockServer::start().await;
@@ -987,9 +984,7 @@ async fn test_responses_stream_complex_mixed_content_and_tools() {
 
 #[tokio::test]
 async fn test_responses_stream_maps_errors_to_response_failed() {
-    if skip_if_localhost_bind_unavailable(
-        "test_responses_stream_maps_errors_to_response_failed",
-    ) {
+    if skip_if_localhost_bind_unavailable("test_responses_stream_maps_errors_to_response_failed") {
         return;
     }
     let mock_server = MockServer::start().await;

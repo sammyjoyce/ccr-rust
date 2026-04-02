@@ -1,91 +1,135 @@
-use anyhow::{Context, Result};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Value};
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
-use super::protocol::{JsonRpcMessage, McpTool};
+use crate::mcp::protocol::{JsonRpcMessage, McpTool};
 
-/// An MCP backend wrapping a child process with piped stdin/stdout.
-///
-/// Communication uses line-delimited JSON (one JSON object per line).
 pub struct McpBackend {
+    command: String,
     child: Child,
-    stdin: tokio::process::ChildStdin,
-    reader: BufReader<tokio::process::ChildStdout>,
+    stdin: ChildStdin,
+    stdout: Lines<BufReader<ChildStdout>>,
 }
 
 impl McpBackend {
-    /// Spawn an MCP backend process.
-    ///
-    /// `command` is split on whitespace; the first token is the program,
-    /// the rest are arguments.
     pub async fn spawn(command: &str) -> Result<Self> {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        let (program, args) = parts
-            .split_first()
-            .context("empty MCP backend command")?;
-
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+        let mut child = Command::new("bash")
+            .arg("-lc")
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()
-            .with_context(|| format!("failed to spawn MCP backend: {}", command))?;
+            .with_context(|| format!("failed to spawn MCP backend: {command}"))?;
 
-        let stdin = child.stdin.take().context("no stdin on child")?;
-        let stdout = child.stdout.take().context("no stdout on child")?;
-        let reader = BufReader::new(stdout);
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("MCP backend missing piped stdin: {command}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("MCP backend missing piped stdout: {command}"))?;
 
         Ok(Self {
+            command: command.to_string(),
             child,
             stdin,
-            reader,
+            stdout: BufReader::new(stdout).lines(),
         })
     }
 
-    /// Send a JSON-RPC message and read a single response line.
     pub async fn send(&mut self, msg: &JsonRpcMessage) -> Result<JsonRpcMessage> {
-        let mut line = serde_json::to_string(msg)?;
-        line.push('\n');
-        self.stdin.write_all(line.as_bytes()).await?;
-        self.stdin.flush().await?;
+        let encoded = serde_json::to_string(msg).context("failed to serialize JSON-RPC message")?;
 
-        let mut buf = String::new();
-        self.reader.read_line(&mut buf).await?;
-        let resp: JsonRpcMessage =
-            serde_json::from_str(buf.trim()).context("invalid JSON-RPC from backend")?;
-        Ok(resp)
+        self.stdin
+            .write_all(encoded.as_bytes())
+            .await
+            .with_context(|| format!("failed to write request to backend: {}", self.command))?;
+        self.stdin
+            .write_all(b"\n")
+            .await
+            .with_context(|| format!("failed to frame request for backend: {}", self.command))?;
+        self.stdin
+            .flush()
+            .await
+            .with_context(|| format!("failed to flush request to backend: {}", self.command))?;
+
+        loop {
+            let line = self.stdout.next_line().await.with_context(|| {
+                format!("failed to read response from backend: {}", self.command)
+            })?;
+
+            let Some(line) = line else {
+                let status = self
+                    .child
+                    .try_wait()
+                    .context("failed to poll backend exit status")?;
+                return Err(anyhow!(
+                    "MCP backend exited before responding (command: {}, status: {:?})",
+                    self.command,
+                    status
+                ));
+            };
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let parsed: JsonRpcMessage = serde_json::from_str(trimmed)
+                .with_context(|| format!("invalid backend JSON-RPC frame: {trimmed}"))?;
+
+            // Skip server-to-client notifications (have method set, no id)
+            if parsed.method.is_some() {
+                continue;
+            }
+
+            // Skip responses whose id doesn't match our request
+            if parsed.id != msg.id {
+                continue;
+            }
+
+            return Ok(parsed);
+        }
     }
 
-    /// Call `tools/list` on this backend and return the tool definitions.
     pub async fn list_tools(&mut self) -> Result<Vec<McpTool>> {
-        let req = JsonRpcMessage::request(
-            serde_json::json!(1),
-            "tools/list",
-            serde_json::json!({}),
-        );
-        let resp = self.send(&req).await?;
-        let result = resp.result.context("tools/list returned no result")?;
-        let tools: Vec<McpTool> = serde_json::from_value(
-            result
-                .get("tools")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-        )?;
-        Ok(tools)
-    }
+        let request = JsonRpcMessage {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(Value::String("tools-list".to_string())),
+            method: Some("tools/list".to_string()),
+            params: Some(json!({})),
+            result: None,
+            error: None,
+        };
 
-    /// Kill the backend process.
-    pub async fn kill(&mut self) -> Result<()> {
-        self.child.kill().await?;
-        Ok(())
+        let response = self.send(&request).await?;
+        if let Some(error) = response.error {
+            return Err(anyhow!("backend tools/list failed: {error}"));
+        }
+
+        let result = response
+            .result
+            .ok_or_else(|| anyhow!("backend tools/list returned no result"))?;
+
+        let tools_value = if let Some(obj) = result.as_object() {
+            obj.get("tools")
+                .cloned()
+                .ok_or_else(|| anyhow!("backend tools/list result missing tools field"))?
+        } else {
+            result
+        };
+
+        serde_json::from_value(tools_value).context("failed to decode tools/list payload")
     }
 }
 
 impl Drop for McpBackend {
     fn drop(&mut self) {
-        // Best-effort kill on drop; ignore errors since the process may
-        // have already exited.
+        tracing::trace!("killing MCP backend child process: {}", self.command);
         let _ = self.child.start_kill();
     }
 }

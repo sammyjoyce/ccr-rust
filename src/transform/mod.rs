@@ -40,6 +40,6 @@ pub use registry::TransformerRegistry;
 pub mod output_compress;
 pub mod toolcompress;
 pub use output_compress::OutputCompressTransformer;
+pub use toolcompress::ToolCompressTransformer;
 pub mod thinktag;
 pub use thinktag::ThinkTagTransformer;
-pub use toolcompress::ToolCompressTransformer;

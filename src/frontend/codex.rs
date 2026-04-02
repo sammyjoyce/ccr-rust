@@ -331,7 +331,6 @@ impl Frontend for CodexFrontend {
     ///
     /// Converts InternalResponse to OpenAI JSON response format.
     fn serialize_response(&self, response: InternalResponse) -> Result<Vec<u8>> {
-
         // Extract text and reasoning content from content blocks
         let mut content = String::new();
         let mut reasoning_content = String::new();
@@ -833,11 +832,9 @@ mod tests {
         assert_eq!(json["object"], "chat.completion");
         assert_eq!(json["model"], "gpt-4");
         assert_eq!(json["choices"][0]["message"]["content"], "Hello, world!");
-        assert!(
-            json["choices"][0]["message"]
-                .get("reasoning_content")
-                .is_none()
-        );
+        assert!(json["choices"][0]["message"]
+            .get("reasoning_content")
+            .is_none());
         assert_eq!(json["choices"][0]["finish_reason"], "stop");
         assert_eq!(json["usage"]["prompt_tokens"], 10);
         assert_eq!(json["usage"]["completion_tokens"], 5);

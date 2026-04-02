@@ -67,12 +67,13 @@ impl TransformerRegistry {
 
         // Compression transformers
         registry.register("toolcompress", |opts| {
-            if let Some(o) = opts {
-                return Box::new(ToolCompressTransformer::from_options(o));
-            }
-            Box::new(ToolCompressTransformer::default())
+            let default_options = serde_json::json!({ "level": "low" });
+            let options = opts.unwrap_or(&default_options);
+            Box::new(ToolCompressTransformer::from_options(options))
         });
-        registry.register("output_compress", |_opts| Box::new(OutputCompressTransformer));
+        registry.register("output_compress", |_opts| {
+            Box::new(OutputCompressTransformer)
+        });
 
         registry
     }
@@ -142,12 +143,13 @@ mod tests {
     fn registry_new_registers_provider_transformers() {
         let registry = TransformerRegistry::new();
         assert!(!registry.is_empty());
-        assert_eq!(registry.len(), 11);
+        assert_eq!(registry.len(), 12);
         assert!(registry.has("zai"));
         assert!(registry.has("minimax"));
         assert!(registry.has("moonshot"));
         assert!(registry.has("kimi"));
         assert!(registry.has("deepseek"));
+        assert!(registry.has("gemini"));
         assert!(registry.has("anthropic"));
         assert!(registry.has("openai-to-anthropic"));
         assert!(registry.has("maxtoken"));
