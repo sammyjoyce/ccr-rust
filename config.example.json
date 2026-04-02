@@ -46,17 +46,13 @@
             }
         },
         {
-            "name": "gemini",
-            "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-            "api_key": "${GEMINI_API_KEY}",
+            "name": "cerebras",
+            "api_base_url": "https://api.cerebras.ai/v1",
+            "api_key": "${CEREBRAS_API_KEY}",
             "models": [
-                "gemini-3.1-pro-preview"
+                "gpt-oss-120b"
             ],
-            "transformer": {
-                "use": [
-                    "anthropic"
-                ]
-            }
+            "tier_name": "ccr-cerebras"
         },
         {
             "name": "qwen",
@@ -93,7 +89,7 @@
             "route": "deepseek,deepseek-reasoner"
         },
         "documentation": {
-            "route": "gemini,gemini-3.1-pro-preview"
+            "route": "deepseek,deepseek-chat"
         }
     },
     "Frontend": {

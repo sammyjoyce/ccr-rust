@@ -1,201 +1,123 @@
 # CCR-Rust
 
-> **Universal AI coding proxy.** Route Claude Code—and other Anthropic/OpenAI-compatible clients—through multiple LLM providers with automatic failover.
+Multi-protocol AI proxy. Routes Claude Code, Codex, and OpenAI-compatible clients through multiple LLM providers with automatic tier failover.
 
-- **Automatic failover** — Tier 0 rate-limited? Falls back to Tier 1, then Tier 2
-- **Compatible HTTP APIs** — Exposes Anthropic Messages plus OpenAI-compatible Chat Completions and Responses endpoints
-- **Task-based routing** — Fast models for code gen, reasoning models for complex refactors
-- **Cost control** — Cheaper providers by default, expensive ones as fallback
+```
+  Claude Code ──┐                    ┌──> Z.AI (GLM-5.1)
+                │  ┌──────────────┐  ├──> Cerebras (gpt-oss-120b)
+  Codex CLI ────┼──│  CCR-Rust    │──├──> Kimi (K2.5)
+                │  │  :3456       │  ├──> MiniMax (M2.7)
+  OpenAI SDK ───┤  └──────────────┘  ├──> DeepSeek
+                │         │          └──> OpenRouter (200+)
+  MCP Clients ──┘    /metrics
+```
 
-> **Compatibility note:** Claude Code is the verified frontend today. CCR-Rust also exposes `/v1/chat/completions`, `/v1/responses`, and `/v1/models`, and those HTTP/SSE paths are covered by internal tests. Modern Codex CLI support has not been re-validated recently, so treat it as experimental rather than “full support”.
-
-## Supported Providers
-
-| Provider | Models | Best For |
-|----------|--------|----------|
-| **Z.AI (GLM)** | GLM-5.1 (`glm-5` on some accounts) | Fast code generation, daily driver |
-| **Qwen (Alibaba)** | `qwen3-coder-next`, `qwen3.5-plus` | Code generation, multi-language support |
-| **DeepSeek** | deepseek-chat, deepseek-reasoner | Deep reasoning, complex refactors |
-| **MiniMax** | MiniMax-M2.7 | High-performance reasoning |
-| **Kimi (Moonshot)** | Kimi K2.5 | Extended context (1M+ tokens) |
-| **Google Gemini** | `gemini-3.1-pro-preview` | Large-context reasoning, documentation, repo-scale synthesis |
-| **OpenRouter** | 200+ models | Fallback to anything |
-
-### Coding Plan Discounts
-
-Several providers offer subscription plans with better rates than pay-as-you-go:
-
-| Provider | Plan | Savings |
-|----------|------|---------|
-| **Z.AI** | [Coding Plan](https://z.ai/subscribe?ic=Y8HASOW1RU) | **10% off** — Best value for daily use |
-| **Qwen** | [Coding Plan](https://www.alibabacloud.com/help/en/model-studio/coding-plan) | **$10-50/month**, up to 90K requests |
-| **MiniMax** | [Coding Plan](https://platform.minimax.io/subscribe/coding-plan?code=AnKU0nzXQG&source=link) | **10% off** |
-| DeepSeek | Pay-as-you-go | Usage-based pricing |
-| OpenRouter | Pay-as-you-go | Usage-based pricing |
-
-## Frontend Compatibility
-
-| Frontend | Setup | Status |
-|----------|-------|--------|
-| **Claude Code** | `export ANTHROPIC_BASE_URL=http://127.0.0.1:3456` | ✅ Recommended |
-| **OpenAI-compatible apps / SDKs** | Point them at `http://127.0.0.1:3456/v1` | ✅ Supported over HTTP |
-| **Codex CLI** | Use current Codex `config.toml` provider settings if experimenting | ⚠️ Experimental / unverified |
-
-## How It Works
-
-1. Your assistant or client sends a request to `localhost:3456`
-2. CCR-Rust tries Tier 0 (e.g., GLM-5.1)
-3. If that fails (rate limit, timeout, error), it retries on Tier 1 (e.g., DeepSeek)
-4. Still failing? Tier 2 (e.g., MiniMax), and so on
-5. Response goes back in the protocol your client expects
-
-All transparent for supported clients.
-
----
+~15MB binary. <50ms P99 routing overhead. 200+ concurrent streams.
 
 ## Quick Start
 
-### 1. Build
-
 ```bash
-git clone https://github.com/RESMP-DEV/ccr-rust.git
-cd ccr-rust
-cargo build --release
-cargo install --path .
-```
+# Build
+cd contrib/ccr-rust
+cargo build --release && cargo install --path . --force
 
-### 2. Configure
-
-Create `~/.claude-code-router/config.json`:
-
-```json
+# Configure (or use ./scripts/ccr-rust.sh install-config)
+mkdir -p ~/.claude-code-router
+cat > ~/.claude-code-router/config.json << 'EOF'
 {
     "Providers": [
         {
             "name": "zai",
             "api_base_url": "https://api.z.ai/api/coding/paas/v4",
-            "api_key": "YOUR_ZAI_API_KEY",
-            "models": ["glm-5.1", "glm-5"],
-            "transformer": { "use": ["anthropic"] }
-        },
-        {
-            "name": "deepseek",
-            "api_base_url": "https://api.deepseek.com",
-            "api_key": "YOUR_DEEPSEEK_API_KEY",
-            "models": ["deepseek-chat", "deepseek-reasoner"],
-            "transformer": { "use": ["anthropic", "deepseek"] }
+            "api_key": "${ZAI_API_KEY}",
+            "models": ["glm-5.1"],
+            "transformer": { "use": ["anthropic"] },
+            "tier_name": "ccr-glm"
         }
     ],
     "Router": {
         "default": "zai,glm-5.1",
-        "think": "deepseek,deepseek-reasoner"
+        "tiers": ["zai,glm-5.1"]
     }
 }
-```
+EOF
 
-If your Z.AI account still exposes `glm-5` instead of `glm-5.1`, use `zai,glm-5` for the route and leave both model IDs in the provider list.
-
-### 3. Run
-
-```bash
+# Run
 ccr-rust start
-```
 
-### 4. Connect Your Assistant or Client
-
-**Claude Code (recommended):**
-```bash
+# Connect
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
 claude
 ```
 
-**OpenAI-compatible apps / SDKs:**
+## Providers
 
-- Base URL: `http://127.0.0.1:3456/v1`
-- API key: any non-empty string
-- Supported endpoints: `/v1/chat/completions`, `/v1/responses`, `/v1/models`
+| Provider | Models | Protocol | Notes |
+|----------|--------|----------|-------|
+| Z.AI (GLM) | glm-5.1, glm-5 | OpenAI | Needs `anthropic` transformer |
+| Cerebras | gpt-oss-120b | OpenAI | ~3000 tok/s |
+| Qwen | qwen3-coder-next, qwen3.5-plus | OpenAI | |
+| DeepSeek | deepseek-chat, deepseek-reasoner | OpenAI | Needs `deepseek` transformer |
+| MiniMax | MiniMax-M2.7 | Anthropic | Needs `minimax` transformer |
+| Kimi (Moonshot) | kimi-k2.5 | Anthropic | |
+| OpenRouter | 200+ | OpenAI | Needs `openrouter` transformer |
 
-**Codex CLI (experimental):**
-
-Current Codex releases are configured through `~/.codex/config.toml` using `openai_base_url` or custom `model_providers`, not the older env-var-only flow that earlier versions of this README showed. Because CCR-Rust currently documents only HTTP/SSE endpoints and does not advertise WebSocket transport, we do not currently claim turnkey Codex support. If you want to experiment, follow the official Codex configuration docs and verify your workflow end-to-end:
-
-- [CCR-Rust Codex setup guide](docs/codex_setup.md)
-- [Advanced Configuration](https://developers.openai.com/codex/config-advanced)
-- [Configuration Reference](https://developers.openai.com/codex/config-reference)
-
-That's it for the verified HTTP clients. You still get automatic fallback with no app-side routing logic.
-
----
-
-## Monitoring
-
-```bash
-ccr-rust status      # Health check + latencies
-ccr-rust dashboard   # Live TUI with streams, throughput, failures
-ccr-rust validate    # Check config for errors
-```
-
----
-
-## Configuration Reference
-
-### Config Fields
-
-| Field | Description |
-|-------|-------------|
-| `Providers` | List of LLM backends |
-| `api_base_url` | Provider's API endpoint |
-| `protocol` | `openai` (default) or `anthropic` |
-| `transformer.use` | Request/response transformer chain |
-| `Router.default` | Primary tier (requests go here first) |
-| `Router.think` | Used for reasoning-heavy tasks |
-
-### Transformer Notes
-
-The `transformer` field is optional. Common uses:
-- `{"use": ["anthropic"]}` — Translate OpenAI requests to Anthropic-style
-- `{"use": ["deepseek"]}` — Normalize DeepSeek's `reasoning_content`
-- `{"use": ["minimax"]}` — Extract MiniMax structured reasoning
-- `{"use": ["openrouter"]}` — Add OpenRouter attribution headers
-
-### Multi-Tier Fallback Example
-
+Adding a new OpenAI-compatible provider requires config only, no code changes:
 ```json
 {
-    "Providers": [
-        {
-            "name": "zai",
-            "api_base_url": "https://api.z.ai/api/coding/paas/v4",
-            "api_key": "sk-xxx",
-            "models": ["glm-5.1", "glm-5"],
-            "transformer": { "use": ["anthropic"] }
-        },
-        {
-            "name": "deepseek",
-            "api_base_url": "https://api.deepseek.com",
-            "api_key": "sk-xxx",
-            "models": ["deepseek-chat", "deepseek-reasoner"],
-            "transformer": { "use": ["anthropic", "deepseek"] }
-        },
-        {
-            "name": "minimax",
-            "api_base_url": "https://api.minimax.io/v1",
-            "api_key": "sk-xxx",
-            "models": ["MiniMax-M2.7"]
-        }
-    ],
-    "Router": {
-        "default": "zai,glm-5.1",
-        "think": "deepseek,deepseek-reasoner"
-    }
+    "name": "cerebras",
+    "api_base_url": "https://api.cerebras.ai/v1",
+    "api_key": "${CEREBRAS_API_KEY}",
+    "models": ["gpt-oss-120b"],
+    "tier_name": "ccr-cerebras"
 }
 ```
 
-### Retry Tuning
+## Frontends
+
+| Client | Setup |
+|--------|-------|
+| Claude Code | `export ANTHROPIC_BASE_URL=http://127.0.0.1:3456` |
+| OpenAI-compatible | Base URL `http://127.0.0.1:3456/v1`, any API key |
+| Codex CLI | Via `~/.codex/config.toml` (experimental) |
+
+## CLI
+
+```bash
+ccr-rust start               # Server on :3456
+ccr-rust status              # Health + tier latencies
+ccr-rust dashboard           # Live TUI
+ccr-rust validate            # Check config
+ccr-rust version             # Build info
+ccr-rust captures [--stats]  # Debug captures
+ccr-rust clear-stats         # Reset Redis metrics
+ccr-rust mcp --wrap "cmd"    # MCP aggregation server
+```
+
+## Endpoints
+
+| Endpoint | Format |
+|----------|--------|
+| `POST /v1/messages` | Anthropic Messages |
+| `POST /v1/chat/completions` | OpenAI Chat Completions |
+| `POST /v1/responses` | OpenAI Responses |
+| `POST /preset/{name}/v1/messages` | Preset-routed |
+| `GET /v1/models` | Model list |
+| `GET /health` | Health check |
+| `GET /metrics` | Prometheus |
+| `GET /v1/usage` | Token usage |
+| `GET /v1/latencies` | EWMA latencies |
+| `GET /v1/token-drift` | Token accounting drift |
+| `GET /debug/capture/{status,list,stats}` | Debug captures |
+
+## Failover
+
+Requests try tiers in order. On 429, 5xx, or timeout, the next tier is tried automatically. Rate limit backoff is exponential: `1s * 2^(min(consecutive_429s, 6))`, capped at 60s. Per-tier EWMA latency tracking adjusts backoff dynamically.
 
 ```json
 {
     "Router": {
+        "tiers": ["zai,glm-5.1", "cerebras,gpt-oss-120b", "minimax,MiniMax-M2.7"],
         "tierRetries": {
             "tier-0": { "max_retries": 5, "base_backoff_ms": 50 },
             "tier-1": { "max_retries": 3, "base_backoff_ms": 100 }
@@ -204,101 +126,147 @@ The `transformer` field is optional. Common uses:
 }
 ```
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `max_retries` | 3 | Retry attempts per tier |
-| `base_backoff_ms` | 100 | Initial retry delay |
-| `backoff_multiplier` | 2.0 | Exponential backoff factor |
-
-### Agent Mode (Non-Streaming)
-
-For automated agent workloads, disable streaming to avoid SSE frame parsing errors:
-
+For agent workloads, disable streaming:
 ```json
-{
-    "Router": {
-        "forceNonStreaming": true
-    }
-}
+{ "Router": { "forceNonStreaming": true } }
 ```
 
-**Recommended for:** CI/CD, batch processing, agent orchestration.  
-**Not recommended for:** Interactive coding where you want token-by-token output.
+## Transformers
 
-### Enforce Tier Order
+Chained per-provider via `transformer.use`. Applied to requests before upstream, responses after.
 
-Some clients, including Codex CLI, cache the last successful model. If a request falls back to `openrouter,aurora-alpha`, subsequent requests will target that tier directly, bypassing cheaper tiers.
+| Name | Purpose |
+|------|---------|
+| `anthropic` | Anthropic -> OpenAI format |
+| `openai-to-anthropic` | OpenAI -> Anthropic format |
+| `deepseek` | Normalize `reasoning_content` |
+| `minimax` | Extract structured reasoning |
+| `kimi` | Moonshot compatibility |
+| `openrouter` | Attribution headers |
+| `toolcompress` | Compress tool definitions |
+| `output_compress` | Compress tool results (cargo, git, grep output) |
+| `thinktag` | Strip `<think>`/`<thinking>`/`<reasoning>` |
+| `maxtoken` | Cap `max_tokens` per model |
 
-To force all requests to start from tier 0:
+## MCP Server
 
-```json
-{
-    "Router": {
-        "ignoreDirect": true
-    }
-}
+Aggregates tool catalogs from multiple MCP backends with compression.
+
+```bash
+ccr-rust mcp --level medium \
+  --wrap "npx @anthropic/mcp-server-filesystem" \
+  --wrap "npx @zilliz/claude-context-mcp@latest"
 ```
 
-See [Troubleshooting: Requests Bypassing Tier Order](docs/troubleshooting.md#requests-bypassing-tier-order) for details.
+Compression levels: `none`, `minimal`, `light`, `medium`, `full`
 
-### Persistence (Optional)
+Tool filtering: `--include "search_code,read_file"` / `--exclude "dangerous_tool"`
 
-For long-running dashboards/metrics that survive restarts:
+## Configuration
 
-```json
-{
-    "Persistence": {
-        "mode": "redis",
-        "redis_url": "redis://127.0.0.1:6379/0",
-        "redis_prefix": "ccr-rust:persistence:v1"
-    }
-}
-```
+### Provider
 
----
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | required | Provider ID |
+| `api_base_url` | string | required | Base URL |
+| `api_key` | string | required | Supports `${ENV_VAR}` |
+| `models` | string[] | required | Model IDs |
+| `protocol` | string | `"openai"` | `"openai"` / `"anthropic"` |
+| `transformer.use` | string[] | `[]` | Transformer chain |
+| `tier_name` | string | name | Metrics display name |
 
-## API Endpoints
+### Router
 
-| Endpoint | Wire Format | Streaming Default |
-|----------|-------------|-------------------|
-| `/v1/messages` | Anthropic Messages API | `stream: false` |
-| `/v1/chat/completions` | OpenAI Chat Completions | `stream: false` |
-| `/v1/responses` | OpenAI Responses API | `stream: true` |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `default` | string | required | Primary tier (`"provider,model"`) |
+| `think` | string | -- | Reasoning tier |
+| `background` | string | -- | Background tier |
+| `tiers` | string[] | -- | Fallback order |
+| `forceNonStreaming` | bool | false | Disable SSE |
+| `ignoreDirect` | bool | false | Force tier 0 start |
 
-These are the maintained compatibility surfaces today. CCR-Rust currently documents HTTP/SSE endpoints only; if a client expects additional transports or provider-specific behavior, validate it before relying on it.
+### Persistence
 
-For detailed streaming behavior and failure semantics, see [docs/streaming.md](docs/streaming.md).
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | `"memory"` | `"memory"` / `"redis"` |
+| `redis_url` | string | -- | Redis URL |
+| `redis_prefix` | string | `"ccr-rust:persistence:v1"` | Key prefix |
 
----
+### Debug Capture
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Record request/response pairs |
+| `providers` | string[] | `[]` | Filter providers (empty = all) |
+| `output_dir` | string | `"~/.ccr-rust/captures"` | Output path |
+| `max_files` | int | 1000 | Rotation limit |
+| `capture_success` | bool | false | Capture 2xx responses |
+
+## Monitoring
+
+**TUI**: `ccr-rust dashboard` -- streams, latencies, tokens, failures, drift.
+
+**Prometheus** (`GET /metrics`):
+
+| Metric | Type |
+|--------|------|
+| `ccr_requests_total{tier}` | counter |
+| `ccr_request_duration_seconds{tier}` | histogram |
+| `ccr_failures_total{tier,reason}` | counter |
+| `ccr_active_streams` | gauge |
+| `ccr_input_tokens_total{tier}` | counter |
+| `ccr_output_tokens_total{tier}` | counter |
+| `ccr_rate_limit_hits_total{tier}` | counter |
+| `ccr_tier_ewma_latency_seconds{tier}` | gauge |
+| `ccr_stream_backpressure_total` | counter |
 
 ## Development
 
 ```
 src/
-├── main.rs          # CLI entry point
-├── config.rs        # Config parsing
-├── router.rs        # Request routing & fallback
-├── transformer.rs   # Protocol translation
-├── dashboard.rs     # TUI dashboard
-└── metrics.rs       # Prometheus metrics
+├── main.rs               # CLI (8 subcommands)
+├── config.rs             # Config parsing
+├── router.rs             # HTTP handlers, tier selection, failover
+├── routing.rs            # EWMA latency tracker
+├── proxy.rs              # Dynamic backoff scaler
+├── transformer.rs        # Transformer trait + common impls
+├── transform/            # Provider-specific transformers
+│   ├── registry.rs       # Name -> transformer mapping
+│   ├── deepseek.rs, glm.rs, kimi.rs, minimax.rs
+│   ├── toolcompress.rs, thinktag.rs, maxtoken.rs
+│   └── output_compress/  # Pattern-based output compression
+├── frontend/             # Client format detection + normalization
+│   ├── detection.rs, codex.rs, claude_code.rs
+├── mcp/                  # MCP server + tool catalog aggregation
+│   ├── server.rs, backend.rs, catalog.rs, protocol.rs
+├── sse.rs                # SSE frame parser
+├── metrics.rs            # Prometheus + token auditing
+├── dashboard.rs          # Ratatui TUI
+├── debug_capture.rs      # Request/response capture
+├── ratelimit.rs          # Rate limit state + backoff
+└── google_oauth.rs       # OAuth2 token management
 ```
 
 ```bash
-cargo test           # Run tests
-cargo build --release # Build release binary
+cargo test           # Tests
+cargo build --release  # Release (LTO + strip)
+cargo run --bin ccr-stress -- --streams 100  # Load test
 ```
 
-## Advanced Topics
+## Docs
 
-- [Presets](docs/presets.md) — Named routing presets for different workloads
-- [Gemini Integration](docs/gemini-integration.md) — Gemini 3.1 Pro for large-context reasoning and documentation
-- [Qwen Coding Plan](docs/qwen-coding-plan.md) — Alibaba Cloud's subscription plan for coding
-- [Observability](docs/observability.md) — Prometheus metrics, token drift monitoring
-- [Deployment](docs/deployment.md) — Docker, Kubernetes, systemd
-
-## Contributing
-
-PRs welcome! This project started because we got tired of rate limits interrupting our flow. If that resonates, we'd love your help making it better.
+- [CLI Reference](docs/cli.md)
+- [Configuration](docs/configuration.md)
+- [Presets](docs/presets.md)
+- [Qwen Coding Plan](docs/qwen-coding-plan.md)
+- [Observability](docs/observability.md)
+- [Debug Capture](docs/debug_capture.md)
+- [Streaming](docs/streaming_incremental_design.md)
+- [Deployment](docs/deployment.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## License
 
