@@ -109,6 +109,17 @@ enum Commands {
         #[arg(long)]
         redis_prefix: Option<String>,
     },
+    /// Run as an MCP (Model Context Protocol) server
+    Mcp {
+        #[arg(long, default_value = "low")]
+        level: String,
+        #[arg(long = "wrap", num_args = 1)]
+        wrap: Vec<String>,
+        #[arg(long)]
+        include: Option<String>,
+        #[arg(long)]
+        exclude: Option<String>,
+    },
     /// List and analyze debug captures.
     Captures {
         /// Filter by provider name (e.g., "minimax")
@@ -337,18 +348,24 @@ async fn run_server(
     };
 
     // Initialize Google OAuth cache if any provider uses the Google protocol.
-    let google_oauth = if config
+    let google_oauth = if let Some(google_provider) = config
         .providers()
         .iter()
-        .any(|p| p.protocol == config::ProviderProtocol::Google)
+        .find(|p| p.protocol == config::ProviderProtocol::Google)
     {
-        match ccr_rust::google_oauth::GoogleOAuthCache::from_gemini_creds() {
+        match ccr_rust::google_oauth::GoogleOAuthCache::from_gemini_creds(
+            google_provider.google_client_id.as_deref(),
+            google_provider.google_client_secret.as_deref(),
+        ) {
             Ok(cache) => {
                 tracing::info!("Google OAuth cache initialized from ~/.gemini/oauth_creds.json");
                 Some(Arc::new(cache))
             }
             Err(e) => {
-                tracing::warn!("Failed to initialize Google OAuth (Google providers will fail): {}", e);
+                tracing::warn!(
+                    "Failed to initialize Google OAuth (Google providers will fail): {}",
+                    e
+                );
                 None
             }
         }
@@ -508,6 +525,20 @@ async fn main() -> Result<()> {
             redis_prefix,
         }) => {
             clear_stats(&config_path, redis_url, redis_prefix)?;
+        }
+        Some(Commands::Mcp {
+            level,
+            wrap,
+            include,
+            exclude,
+        }) => {
+            ccr_rust::mcp::server::run(ccr_rust::mcp::server::McpArgs {
+                level,
+                wrap,
+                include,
+                exclude,
+            })
+            .await?;
         }
         Some(Commands::Captures {
             provider,

@@ -368,6 +368,18 @@ pub struct Provider {
     /// Obtained via `loadCodeAssist` or from Gemini CLI logs.
     #[serde(default)]
     pub google_project: Option<String>,
+
+    /// OAuth client ID for `protocol=google`.
+    ///
+    /// If not set, falls back to `GOOGLE_OAUTH_CLIENT_ID` env var.
+    #[serde(default)]
+    pub google_client_id: Option<String>,
+
+    /// OAuth client secret for `protocol=google`.
+    ///
+    /// If not set, falls back to `GOOGLE_OAUTH_CLIENT_SECRET` env var.
+    #[serde(default)]
+    pub google_client_secret: Option<String>,
 }
 
 impl Provider {

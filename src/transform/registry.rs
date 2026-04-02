@@ -6,7 +6,7 @@
 use super::{
     AnthropicToOpenaiTransformer, DeepSeekTransformer, GeminiCodeAssistTransformer, GlmTransformer,
     KimiTransformer, MaxTokenTransformer, MinimaxTransformer, OpenAiToAnthropicTransformer,
-    ThinkTagTransformer,
+    OutputCompressTransformer, ThinkTagTransformer, ToolCompressTransformer,
 };
 use crate::config::TransformerEntry;
 use crate::transformer::{Transformer, TransformerChain};
@@ -64,6 +64,15 @@ impl TransformerRegistry {
             Box::new(MaxTokenTransformer::new(65536, true))
         });
         registry.register("thinktag", |_opts| Box::new(ThinkTagTransformer));
+
+        // Compression transformers
+        registry.register("toolcompress", |opts| {
+            if let Some(o) = opts {
+                return Box::new(ToolCompressTransformer::from_options(o));
+            }
+            Box::new(ToolCompressTransformer::default())
+        });
+        registry.register("output_compress", |_opts| Box::new(OutputCompressTransformer));
 
         registry
     }
@@ -133,7 +142,7 @@ mod tests {
     fn registry_new_registers_provider_transformers() {
         let registry = TransformerRegistry::new();
         assert!(!registry.is_empty());
-        assert_eq!(registry.len(), 9);
+        assert_eq!(registry.len(), 11);
         assert!(registry.has("zai"));
         assert!(registry.has("minimax"));
         assert!(registry.has("moonshot"));
@@ -143,6 +152,8 @@ mod tests {
         assert!(registry.has("openai-to-anthropic"));
         assert!(registry.has("maxtoken"));
         assert!(registry.has("thinktag"));
+        assert!(registry.has("toolcompress"));
+        assert!(registry.has("output_compress"));
     }
 
     #[test]

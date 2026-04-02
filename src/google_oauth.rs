@@ -3,9 +3,9 @@
 //! Handles token caching and automatic refresh using credentials from
 //! `~/.gemini/oauth_creds.json` (written by the Gemini CLI on first auth).
 //!
-//! The OAuth client ID and secret are from Google's public Gemini CLI OAuth app
-//! (distributed in the `@anthropic/gemini-cli` npm package). They identify the
-//! application, not the user — the refresh token is the real credential.
+//! The OAuth client ID and secret must be provided via the provider config
+//! (`google_client_id` / `google_client_secret`) or environment variables
+//! (`GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`).
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -14,13 +14,6 @@ use tracing::{debug, info};
 
 /// Google OAuth2 token endpoint.
 const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
-
-/// Gemini CLI's public OAuth client ID (embedded in the npm package).
-pub const GEMINI_CLI_CLIENT_ID: &str =
-    "REDACTED_GOOGLE_OAUTH_CLIENT_ID";
-
-/// Gemini CLI's public OAuth client secret (embedded in the npm package).
-pub const GEMINI_CLI_CLIENT_SECRET: &str = "REDACTED_GOOGLE_OAUTH_CLIENT_SECRET";
 
 /// Refresh token 5 minutes before expiry.
 const EXPIRY_BUFFER_SECS: i64 = 300;
@@ -62,12 +55,31 @@ pub struct GoogleOAuthCache {
 impl GoogleOAuthCache {
     /// Load credentials from `~/.gemini/oauth_creds.json` and create a cache.
     ///
-    /// Uses the Gemini CLI's public OAuth client ID/secret by default.
-    pub fn from_gemini_creds() -> Result<Self> {
-        Self::from_gemini_creds_with_client(GEMINI_CLI_CLIENT_ID, GEMINI_CLI_CLIENT_SECRET)
+    /// Client ID and secret are resolved from (in order):
+    /// 1. Explicit parameters (from provider config)
+    /// 2. Environment variables `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
+    pub fn from_gemini_creds(
+        config_client_id: Option<&str>,
+        config_client_secret: Option<&str>,
+    ) -> Result<Self> {
+        let client_id = config_client_id
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("GOOGLE_OAUTH_CLIENT_ID").ok())
+            .context(
+                "Google OAuth client_id not found. Set 'google_client_id' in provider config \
+                 or GOOGLE_OAUTH_CLIENT_ID env var.",
+            )?;
+        let client_secret = config_client_secret
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("GOOGLE_OAUTH_CLIENT_SECRET").ok())
+            .context(
+                "Google OAuth client_secret not found. Set 'google_client_secret' in provider \
+                 config or GOOGLE_OAUTH_CLIENT_SECRET env var.",
+            )?;
+        Self::from_gemini_creds_with_client(&client_id, &client_secret)
     }
 
-    /// Load credentials with custom client ID/secret.
+    /// Load credentials with explicit client ID/secret.
     pub fn from_gemini_creds_with_client(client_id: &str, client_secret: &str) -> Result<Self> {
         let creds_path = dirs::home_dir()
             .context("No home directory")?
