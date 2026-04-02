@@ -15,6 +15,7 @@ use crate::config::{Config, ProviderProtocol};
 use crate::debug_capture::{CaptureBuilder, DebugCapture};
 use crate::frontend::codex::CodexFrontend;
 use crate::frontend::{detect_frontend, Frontend};
+use crate::google_oauth::GoogleOAuthCache;
 use crate::metrics::{
     increment_active_requests, record_failure, record_pre_request_tokens,
     record_rate_limit_backoff, record_rate_limit_hit, record_request_duration_with_frontend,
@@ -117,6 +118,8 @@ pub struct AppState {
     pub shutdown_timeout: u64,
     /// Debug capture manager for recording raw API interactions.
     pub debug_capture: Option<Arc<DebugCapture>>,
+    /// Google OAuth2 token cache for Code Assist API.
+    pub google_oauth: Option<Arc<GoogleOAuthCache>>,
 }
 
 // ============================================================================
@@ -1182,6 +1185,7 @@ pub async fn handle_messages(
                 local_estimate,
                 ratelimit_tracker: state.ratelimit_tracker.clone(),
                 debug_capture: state.debug_capture.clone(),
+                google_oauth: state.google_oauth.clone(),
             })
             .await
             {
@@ -2609,6 +2613,7 @@ struct TryRequestArgs<'a> {
     local_estimate: u64,
     ratelimit_tracker: Arc<RateLimitTracker>,
     debug_capture: Option<Arc<DebugCapture>>,
+    google_oauth: Option<Arc<GoogleOAuthCache>>,
 }
 
 async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestError> {
@@ -2621,6 +2626,7 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
         local_estimate,
         ratelimit_tracker,
         debug_capture,
+        google_oauth,
     } = args;
     let provider = config.resolve_provider(tier).ok_or_else(|| {
         TryRequestError::Other(anyhow::anyhow!("Provider not found for tier: {}", tier))
@@ -2673,6 +2679,23 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
                     chain,
                     debug_capture,
                 },
+            )
+            .await
+        }
+        ProviderProtocol::Google => {
+            try_request_via_google_protocol(
+                config,
+                provider,
+                TryRequestProtocolArgs {
+                    transformed_request,
+                    model_name,
+                    tier_name,
+                    local_estimate,
+                    ratelimit_tracker,
+                    chain,
+                    debug_capture,
+                },
+                google_oauth,
             )
             .await
         }
@@ -3301,6 +3324,517 @@ async fn try_request_via_anthropic_protocol(
 
         let mut response = (status, body).into_response();
         insert_ccr_tier_header(&mut response, tier_name);
+        Ok(response)
+    }
+}
+
+// ============================================================================
+// Google Code Assist Protocol
+// ============================================================================
+
+/// Build the Google Code Assist `:generateContent` URL.
+///
+/// Google uses `{base}:{method}` rather than `{base}/{method}`.
+fn provider_google_generate_content_url(provider: &crate::config::Provider) -> String {
+    let base = provider.api_base_url.trim_end_matches('/');
+    format!("{}:generateContent", base)
+}
+
+/// Convert Anthropic messages to Google Code Assist `contents` array.
+///
+/// Anthropic format:
+/// ```json
+/// [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+/// ```
+///
+/// Google format:
+/// ```json
+/// [{"role": "user", "parts": [{"text": "hello"}]}, {"role": "model", "parts": [{"text": "hi"}]}]
+/// ```
+fn anthropic_messages_to_google_contents(messages: &[Message]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|msg| {
+            let role = match msg.role.as_str() {
+                "assistant" => "model",
+                other => other,
+            };
+
+            let parts = match &msg.content {
+                serde_json::Value::String(text) => {
+                    vec![serde_json::json!({"text": text})]
+                }
+                serde_json::Value::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|block| {
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        match block_type {
+                            "text" => {
+                                let text = block.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                                Some(serde_json::json!({"text": text}))
+                            }
+                            "thinking" => {
+                                let text =
+                                    block.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
+                                Some(serde_json::json!({"text": text}))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect(),
+                _ => vec![serde_json::json!({"text": ""})],
+            };
+
+            serde_json::json!({"role": role, "parts": parts})
+        })
+        .collect()
+}
+
+/// Convert Anthropic system prompt to Google `systemInstruction`.
+fn anthropic_system_to_google(system: &serde_json::Value) -> serde_json::Value {
+    match system {
+        serde_json::Value::String(text) => {
+            serde_json::json!({"parts": [{"text": text}]})
+        }
+        serde_json::Value::Array(blocks) => {
+            let parts: Vec<serde_json::Value> = blocks
+                .iter()
+                .filter_map(|block| {
+                    block
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .map(|text| serde_json::json!({"text": text}))
+                })
+                .collect();
+            serde_json::json!({"parts": parts})
+        }
+        _ => serde_json::json!({"parts": [{"text": ""}]}),
+    }
+}
+
+/// Convert Google Code Assist response to Anthropic format.
+fn google_response_to_anthropic(
+    google_resp: &serde_json::Value,
+    model_name: &str,
+) -> AnthropicResponse {
+    // Extract from the `response` wrapper if present, otherwise use the value directly.
+    let inner = google_resp.get("response").unwrap_or(google_resp);
+
+    // Extract text from candidates.
+    let text = inner
+        .get("candidates")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+
+    // Extract usage metadata.
+    let usage_meta = inner.get("usageMetadata");
+    let input_tokens = usage_meta
+        .and_then(|u| u.get("promptTokenCount"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let output_tokens = usage_meta
+        .and_then(|u| u.get("candidatesTokenCount"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    // Map finish reason.
+    let stop_reason = inner
+        .get("candidates")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("finishReason"))
+        .and_then(|r| r.as_str())
+        .map(|r| match r {
+            "STOP" => "end_turn",
+            "MAX_TOKENS" => "max_tokens",
+            "SAFETY" => "end_turn",
+            _ => "end_turn",
+        })
+        .unwrap_or("end_turn")
+        .to_string();
+
+    AnthropicResponse {
+        id: format!("msg_google_{}", chrono::Utc::now().timestamp_millis()),
+        response_type: "message".to_string(),
+        role: "assistant".to_string(),
+        content: vec![AnthropicContentBlock::Text { text }],
+        model: model_name.to_string(),
+        stop_reason: Some(stop_reason),
+        usage: AnthropicUsage {
+            input_tokens,
+            output_tokens,
+        },
+    }
+}
+
+/// Emit a complete Anthropic response as a sequence of SSE events.
+///
+/// Used when the client requested `stream: true` but Google returned a
+/// non-streaming response (pseudo-streaming).
+fn emit_anthropic_sse_events(resp: &AnthropicResponse) -> Vec<String> {
+    let mut events = Vec::new();
+
+    // message_start
+    let start_msg = serde_json::json!({
+        "type": "message_start",
+        "message": {
+            "id": resp.id,
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": resp.model,
+            "stop_reason": null,
+            "stop_sequence": null,
+            "usage": {
+                "input_tokens": resp.usage.input_tokens,
+                "output_tokens": 0
+            }
+        }
+    });
+    events.push(format!("event: message_start\ndata: {}\n\n", start_msg));
+
+    // Emit content blocks.
+    for (idx, block) in resp.content.iter().enumerate() {
+        let (block_type, text) = match block {
+            AnthropicContentBlock::Text { text } => ("text", text.as_str()),
+            _ => continue,
+        };
+
+        // content_block_start
+        let block_start = serde_json::json!({
+            "type": "content_block_start",
+            "index": idx,
+            "content_block": {"type": block_type, "text": ""}
+        });
+        events.push(format!(
+            "event: content_block_start\ndata: {}\n\n",
+            block_start
+        ));
+
+        // content_block_delta
+        let delta = serde_json::json!({
+            "type": "content_block_delta",
+            "index": idx,
+            "delta": {"type": "text_delta", "text": text}
+        });
+        events.push(format!("event: content_block_delta\ndata: {}\n\n", delta));
+
+        // content_block_stop
+        let stop = serde_json::json!({
+            "type": "content_block_stop",
+            "index": idx
+        });
+        events.push(format!("event: content_block_stop\ndata: {}\n\n", stop));
+    }
+
+    // message_delta
+    let msg_delta = serde_json::json!({
+        "type": "message_delta",
+        "delta": {
+            "stop_reason": resp.stop_reason,
+            "stop_sequence": null
+        },
+        "usage": {
+            "output_tokens": resp.usage.output_tokens
+        }
+    });
+    events.push(format!("event: message_delta\ndata: {}\n\n", msg_delta));
+
+    // message_stop
+    events.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string());
+
+    events
+}
+
+async fn try_request_via_google_protocol(
+    config: &Config,
+    provider: &crate::config::Provider,
+    args: TryRequestProtocolArgs<'_>,
+    google_oauth: Option<Arc<GoogleOAuthCache>>,
+) -> Result<Response, TryRequestError> {
+    let TryRequestProtocolArgs {
+        transformed_request,
+        model_name,
+        tier_name,
+        local_estimate,
+        ratelimit_tracker,
+        chain,
+        debug_capture,
+    } = args;
+
+    let oauth = google_oauth.ok_or_else(|| {
+        TryRequestError::Other(anyhow::anyhow!(
+            "Google protocol requires OAuth credentials (~/.gemini/oauth_creds.json)"
+        ))
+    })?;
+
+    let project = provider.google_project.as_deref().ok_or_else(|| {
+        TryRequestError::Other(anyhow::anyhow!(
+            "Google protocol requires 'google_project' in provider config"
+        ))
+    })?;
+
+    let url = provider_google_generate_content_url(provider);
+    trace!(tier = tier_name, model = model_name, url = %url, "dispatching Google Code Assist request");
+
+    // Deserialize as AnthropicRequest to extract fields.
+    let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
+        .map_err(|e| TryRequestError::Other(e.into()))?;
+
+    // Build Google Code Assist envelope.
+    let contents = anthropic_messages_to_google_contents(&request.messages);
+
+    let mut generation_config = serde_json::json!({});
+    if let Some(max_tokens) = request.max_tokens {
+        generation_config["maxOutputTokens"] = serde_json::json!(max_tokens);
+    }
+    if let Some(temperature) = request.temperature {
+        generation_config["temperature"] = serde_json::json!(temperature);
+    }
+
+    let mut request_body = serde_json::json!({
+        "contents": contents,
+        "generationConfig": generation_config,
+    });
+
+    if let Some(ref system) = request.system {
+        request_body["systemInstruction"] = anthropic_system_to_google(system);
+    }
+
+    let google_envelope = serde_json::json!({
+        "model": model_name,
+        "project": project,
+        "request": request_body,
+    });
+
+    // Get OAuth access token.
+    let access_token = oauth
+        .get_access_token()
+        .await
+        .map_err(TryRequestError::Other)?;
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "Authorization",
+        format!("Bearer {}", access_token).parse().map_err(
+            |e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            },
+        )?,
+    );
+    headers.insert(
+        "Content-Type",
+        "application/json"
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+
+    // Gemini CLI identification headers — match what Gemini CLI sends to cloudcode-pa.
+    // Format: GeminiCLI/{version}/{model} ({platform}; {arch}; {surface})
+    let gemini_cli_version = "0.36.0";
+    let platform = if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x64"
+    } else {
+        "unknown"
+    };
+    let user_agent = format!(
+        "GeminiCLI/{}/{} ({}; {}; terminal)",
+        gemini_cli_version, model_name, platform, arch
+    );
+    headers.insert(
+        "User-Agent",
+        user_agent
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+
+    // x-goog-user-project — quota routing header used by Google APIs.
+    headers.insert(
+        "x-goog-user-project",
+        project
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+
+    // Set up debug capture.
+    let capture_builder = if let Some(ref capture) = debug_capture {
+        if capture.should_capture(&provider.name) {
+            Some(
+                CaptureBuilder::new(capture.next_request_id(), &provider.name, tier_name)
+                    .model(model_name)
+                    .url(&url)
+                    .request_body(google_envelope.clone())
+                    .streaming(false)
+                    .start(),
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Always make non-streaming request to Google (pseudo-stream if client wants SSE).
+    let resp = config
+        .http_client()
+        .post(&url)
+        .headers(headers)
+        .json(&google_envelope)
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            if let (Some(builder), Some(capture)) = (capture_builder, debug_capture) {
+                let interaction = builder.complete_with_error(e.to_string());
+                if let Err(capture_err) = capture.record(interaction).await {
+                    warn!("Failed to record debug capture: {}", capture_err);
+                }
+            }
+            return Err(TryRequestError::Other(e.into()));
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(std::time::Duration::from_secs);
+
+            record_rate_limit_hit(tier_name);
+            ratelimit_tracker.record_429(tier_name, retry_after);
+            record_rate_limit_backoff(tier_name);
+
+            let body_bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| TryRequestError::Other(e.into()))?;
+
+            warn!(
+                tier = tier_name,
+                "Google 429 response body: {}",
+                String::from_utf8_lossy(&body_bytes[..body_bytes.len().min(500)])
+            );
+
+            let mut builder =
+                axum::response::Response::builder().status(reqwest_status_to_axum(status));
+            builder = builder.header("content-type", "application/json");
+            builder = builder.header("x-ccr-tier", tier_name);
+
+            return builder.body(Body::from(body_bytes.to_vec())).map_err(|e| {
+                TryRequestError::Other(anyhow::anyhow!("Failed to build response: {}", e))
+            });
+        }
+
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+        return Err(TryRequestError::Other(anyhow::anyhow!(
+            "Google provider returned {} from {}: {}",
+            status,
+            url,
+            body
+        )));
+    }
+
+    // Parse Google response.
+    let resp_status = resp.status().as_u16();
+    let body = resp
+        .bytes()
+        .await
+        .map_err(|e| TryRequestError::Other(e.into()))?;
+    let body_str = String::from_utf8_lossy(&body);
+
+    // Record debug capture.
+    if let (Some(builder), Some(capture)) = (capture_builder, debug_capture) {
+        let interaction = builder.complete(resp_status, &body_str, None, None);
+        if let Err(capture_err) = capture.record(interaction).await {
+            warn!("Failed to record debug capture: {}", capture_err);
+        }
+    }
+
+    let google_resp: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
+        TryRequestError::Other(anyhow::anyhow!("Failed to parse Google response: {}", e))
+    })?;
+
+    let anthropic_resp = google_response_to_anthropic(&google_resp, model_name);
+
+    record_usage(
+        tier_name,
+        anthropic_resp.usage.input_tokens,
+        anthropic_resp.usage.output_tokens,
+        0,
+        0,
+    );
+    verify_token_usage(tier_name, local_estimate, anthropic_resp.usage.input_tokens);
+
+    // Apply response transformers.
+    let final_resp = if chain.is_empty() {
+        anthropic_resp
+    } else {
+        let resp_value =
+            serde_json::to_value(&anthropic_resp).map_err(|e| TryRequestError::Other(e.into()))?;
+        let transformed = chain
+            .apply_response(resp_value)
+            .map_err(TryRequestError::Other)?;
+        serde_json::from_value::<AnthropicResponse>(transformed).unwrap_or(anthropic_resp)
+    };
+
+    if request.stream.unwrap_or(false) {
+        // Pseudo-streaming: emit the full response as Anthropic SSE events.
+        let events = emit_anthropic_sse_events(&final_resp);
+        let sse_body = events.join("");
+
+        let mut response = axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .body(Body::from(sse_body))
+            .map_err(|e| {
+                TryRequestError::Other(anyhow::anyhow!("Failed to build SSE response: {}", e))
+            })?;
+        insert_ccr_tier_header(&mut response, tier_name);
+        ratelimit_tracker.record_success(tier_name, None, None);
+        Ok(response)
+    } else {
+        let response_body =
+            serde_json::to_vec(&final_resp).map_err(|e| TryRequestError::Other(e.into()))?;
+        let mut response = (StatusCode::OK, response_body).into_response();
+        insert_ccr_tier_header(&mut response, tier_name);
+        ratelimit_tracker.record_success(tier_name, None, None);
         Ok(response)
     }
 }

@@ -362,6 +362,12 @@ pub struct Provider {
     /// If not specified, defaults to the provider name.
     #[serde(default)]
     pub tier_name: Option<String>,
+
+    /// GCP project ID for `protocol=google` (Google Code Assist API).
+    ///
+    /// Obtained via `loadCodeAssist` or from Gemini CLI logs.
+    #[serde(default)]
+    pub google_project: Option<String>,
 }
 
 impl Provider {
@@ -388,6 +394,7 @@ pub enum ProviderProtocol {
     #[default]
     Openai,
     Anthropic,
+    Google,
 }
 
 /// Configuration for web search routing.

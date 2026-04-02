@@ -2,6 +2,7 @@ pub mod config;
 pub mod dashboard;
 pub mod debug_capture;
 pub mod frontend;
+pub mod google_oauth;
 pub mod metrics;
 pub mod proxy;
 pub mod ratelimit;

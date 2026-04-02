@@ -4,6 +4,7 @@
 //! before returning to clients. This mirrors the Node.js transformer system.
 
 use crate::config::TransformerEntry;
+use crate::transform::gemini::GeminiCodeAssistTransformer;
 use crate::transform::glm::GlmTransformer;
 use crate::transform::minimax::MinimaxTransformer;
 use crate::transform::openai_to_anthropic::OpenAiToAnthropicTransformer;
@@ -692,6 +693,7 @@ impl TransformerRegistry {
         registry.register("enhancetool", Arc::new(EnhanceToolTransformer));
         registry.register("thinktag", Arc::new(ThinkTagTransformer));
         registry.register("glm", Arc::new(GlmTransformer::default()));
+        registry.register("gemini", Arc::new(GeminiCodeAssistTransformer));
 
         registry
     }

@@ -4,8 +4,9 @@
 //! from factory functions, allowing dynamic instantiation based on configuration.
 
 use super::{
-    AnthropicToOpenaiTransformer, DeepSeekTransformer, GlmTransformer, KimiTransformer,
-    MaxTokenTransformer, MinimaxTransformer, OpenAiToAnthropicTransformer, ThinkTagTransformer,
+    AnthropicToOpenaiTransformer, DeepSeekTransformer, GeminiCodeAssistTransformer, GlmTransformer,
+    KimiTransformer, MaxTokenTransformer, MinimaxTransformer, OpenAiToAnthropicTransformer,
+    ThinkTagTransformer,
 };
 use crate::config::TransformerEntry;
 use crate::transformer::{Transformer, TransformerChain};
@@ -44,6 +45,8 @@ impl TransformerRegistry {
         }
         // Tier 7: DeepSeek Reasoner
         registry.register("deepseek", |_opts| Box::new(DeepSeekTransformer));
+        // Gemini Code Assist (Google protocol)
+        registry.register("gemini", |_opts| Box::new(GeminiCodeAssistTransformer));
 
         // Format conversion transformers
         registry.register("anthropic", |_opts| Box::new(AnthropicToOpenaiTransformer));
