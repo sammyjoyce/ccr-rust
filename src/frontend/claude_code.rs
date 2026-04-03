@@ -260,13 +260,13 @@ impl Frontend for ClaudeCodeFrontend {
             anthropic_response["stop_reason"] = Value::String(stop);
         }
 
-        // Add usage if available
-        if let Some(usage) = response.usage {
-            anthropic_response["usage"] = serde_json::json!({
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens
-            });
-        }
+        // Always include usage — Claude CLI crashes on missing/null usage
+        // ("undefined is not an object (evaluating '_.input_tokens')")
+        let usage = response.usage.unwrap_or_default();
+        anthropic_response["usage"] = serde_json::json!({
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens
+        });
 
         // Add extra data if present
         if let Some(extra) = response.extra_data {

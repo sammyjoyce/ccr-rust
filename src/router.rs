@@ -863,7 +863,7 @@ fn translate_stream_chunk_to_anthropic(
                 "type": "message",
                 "role": "assistant",
                 "model": chunk.model,
-                "usage": null
+                "usage": {"input_tokens": 0, "output_tokens": 0}
             })),
             index: None,
             content_block: None,
@@ -1090,8 +1090,10 @@ pub async fn handle_messages(
     let mut request = request;
 
     // Force non-streaming if configured (helps avoid SSE frame parsing limits)
-    if config.router().force_non_streaming && request.stream.unwrap_or(false) {
-        info!("Forcing non-streaming mode (forceNonStreaming=true)");
+    // Remember original stream flag so we can pseudo-stream the response back
+    let client_wants_stream = request.stream.unwrap_or(false);
+    if config.router().force_non_streaming && client_wants_stream {
+        info!("Forcing non-streaming mode (forceNonStreaming=true), will pseudo-stream response");
         request.stream = Some(false);
     }
 
@@ -1208,6 +1210,13 @@ pub async fn handle_messages(
                         "Success on {} after {:.2}s (attempt {:.3}s)",
                         tier_name, total_duration, attempt_duration
                     );
+
+                    // If client wanted streaming but we forced non-streaming,
+                    // wrap the JSON response as pseudo-SSE so Claude CLI can parse it.
+                    if client_wants_stream && config.router().force_non_streaming {
+                        return wrap_json_response_as_sse(response).await;
+                    }
+
                     return response;
                 }
                 Err(TryRequestError::RateLimited(retry_after)) => {
@@ -2906,8 +2915,8 @@ async fn try_request_via_openai_protocol(
         // Translate Anthropic request to OpenAI format.
         let openai_request = translate_request_anthropic_to_openai(&request, model_name);
         let stream = request.stream.unwrap_or(false);
-        let value = serde_json::to_value(&openai_request)
-            .map_err(|e| TryRequestError::Other(e.into()))?;
+        let value =
+            serde_json::to_value(&openai_request).map_err(|e| TryRequestError::Other(e.into()))?;
         (value, stream)
     };
 
@@ -3620,6 +3629,51 @@ fn emit_anthropic_sse_events(resp: &AnthropicResponse) -> Vec<String> {
     events.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string());
 
     events
+}
+
+/// Wrap a non-streaming Anthropic JSON response as pseudo-SSE.
+///
+/// Used when `forceNonStreaming` is true but the client requested `stream: true`.
+/// Reads the response body, parses it as an `AnthropicResponse`, and re-emits it
+/// as SSE events that Claude CLI can parse. Falls through to the original response
+/// if parsing fails.
+async fn wrap_json_response_as_sse(response: Response) -> Response {
+    let (parts, body) = response.into_parts();
+
+    // Only wrap successful JSON responses
+    if parts.status != StatusCode::OK {
+        return Response::from_parts(parts, body);
+    }
+
+    let bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to read response body",
+            )
+                .into_response();
+        }
+    };
+
+    // Try to parse as AnthropicResponse
+    if let Ok(anthropic_resp) = serde_json::from_slice::<AnthropicResponse>(&bytes) {
+        let sse_events = emit_anthropic_sse_events(&anthropic_resp);
+        let sse_body = sse_events.join("");
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .body(Body::from(sse_body))
+            .unwrap_or_else(|_| {
+                // Fallback: return original bytes if SSE build fails
+                Response::from_parts(parts, Body::from(bytes))
+            })
+    } else {
+        // Can't parse as Anthropic — return original response unchanged
+        Response::from_parts(parts, Body::from(bytes))
+    }
 }
 
 async fn try_request_via_google_protocol(
