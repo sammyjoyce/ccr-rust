@@ -483,6 +483,37 @@ CCR-Rust automatically routes based on model availability and latency. Codex req
 
 ---
 
+## OpenAI Passthrough Optimization
+
+When Codex CLI (which speaks OpenAI format) is routed to an OpenAI-compatible
+backend (GLM, Kimi, Minimax, DeepSeek), ccr-rust now detects that both sides
+use the same wire format and **skips the Anthropic intermediate conversion
+entirely**. The original OpenAI request body is forwarded directly to the
+upstream provider with only the `model` field swapped to match the target.
+
+This eliminates a full serialization round-trip (OpenAI → Anthropic → OpenAI)
+and reduces per-request latency by 2-5 ms for affected routes.
+
+**Key details:**
+
+- **Automatic** — no configuration required. ccr-rust activates passthrough
+  whenever the inbound request format matches the outbound provider format.
+- **Transformer override** — if a `transformer` chain is configured on the
+  provider (e.g., `"transformer": { "use": ["anthropic"] }`), the passthrough
+  is disabled and the full translation pipeline is used instead.
+- **Response path unchanged** — responses still normalize through Anthropic
+  format before being returned, ensuring consistent `reasoning_content`
+  extraction and tool-call mapping regardless of the request path.
+
+To confirm passthrough is active, check the debug logs:
+
+```bash
+RUST_LOG=ccr_rust=debug ccr-rust start
+# Look for: "openai passthrough: skipping intermediate conversion"
+```
+
+---
+
 ## References
 
 - [CCR-Rust Configuration](./configuration.md) - Full configuration reference

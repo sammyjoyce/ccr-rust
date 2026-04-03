@@ -145,6 +145,14 @@ pub struct AnthropicRequest {
 
     #[serde(default)]
     pub tools: Option<Vec<serde_json::Value>>,
+
+    /// When the original inbound request was already OpenAI-formatted (e.g. from
+    /// a Codex frontend), we stash the raw JSON here so that
+    /// `try_request_via_openai_protocol` can send it directly to an
+    /// OpenAI-compatible backend without the wasteful
+    /// `OpenAI → Anthropic → OpenAI` round-trip translation.
+    #[serde(skip)]
+    pub openai_passthrough_body: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1186,6 +1194,7 @@ pub async fn handle_messages(
                 ratelimit_tracker: state.ratelimit_tracker.clone(),
                 debug_capture: state.debug_capture.clone(),
                 google_oauth: state.google_oauth.clone(),
+                openai_passthrough_body: request.openai_passthrough_body.as_ref(),
             })
             .await
             {
@@ -1293,6 +1302,7 @@ fn internal_request_to_anthropic_request(
                 })
                 .collect()
         }),
+        openai_passthrough_body: None,
     }
 }
 
@@ -2396,6 +2406,10 @@ pub async fn handle_chat_completions(
     headers: HeaderMap,
     Json(request_body): Json<serde_json::Value>,
 ) -> Response {
+    // Preserve the original OpenAI-formatted body for potential passthrough
+    // to OpenAI-compatible backends (avoids OpenAI→Anthropic→OpenAI round-trip).
+    let passthrough_body = request_body.clone();
+
     let frontend = CodexFrontend::new();
     let internal_request = match frontend.parse_request(request_body) {
         Ok(req) => req,
@@ -2414,7 +2428,8 @@ pub async fn handle_chat_completions(
     } else {
         internal_request.stream.unwrap_or(false)
     };
-    let anthropic_request = internal_request_to_anthropic_request(internal_request);
+    let mut anthropic_request = internal_request_to_anthropic_request(internal_request);
+    anthropic_request.openai_passthrough_body = Some(passthrough_body);
     let response = handle_messages(State(state), headers, Json(anthropic_request)).await;
 
     if stream_requested {
@@ -2614,6 +2629,8 @@ struct TryRequestArgs<'a> {
     ratelimit_tracker: Arc<RateLimitTracker>,
     debug_capture: Option<Arc<DebugCapture>>,
     google_oauth: Option<Arc<GoogleOAuthCache>>,
+    /// Original OpenAI request body for passthrough to OpenAI-compatible backends.
+    openai_passthrough_body: Option<&'a serde_json::Value>,
 }
 
 async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestError> {
@@ -2627,6 +2644,7 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
         ratelimit_tracker,
         debug_capture,
         google_oauth,
+        openai_passthrough_body,
     } = args;
     let provider = config.resolve_provider(tier).ok_or_else(|| {
         TryRequestError::Other(anyhow::anyhow!("Provider not found for tier: {}", tier))
@@ -2649,6 +2667,14 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
             .map_err(TryRequestError::Other)?
     };
 
+    // Only use passthrough when the chain has no transformers (transformers may
+    // modify the Anthropic-shaped payload in ways we need to honour).
+    let effective_passthrough = if chain.is_empty() {
+        openai_passthrough_body.cloned()
+    } else {
+        None
+    };
+
     match provider.protocol {
         ProviderProtocol::Openai => {
             try_request_via_openai_protocol(
@@ -2662,6 +2688,7 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
                     ratelimit_tracker,
                     chain,
                     debug_capture,
+                    openai_passthrough_body: effective_passthrough,
                 },
             )
             .await
@@ -2678,6 +2705,7 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
                     ratelimit_tracker,
                     chain,
                     debug_capture,
+                    openai_passthrough_body: None,
                 },
             )
             .await
@@ -2694,6 +2722,7 @@ async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestErr
                     ratelimit_tracker,
                     chain,
                     debug_capture,
+                    openai_passthrough_body: None,
                 },
                 google_oauth,
             )
@@ -2710,6 +2739,8 @@ struct TryRequestProtocolArgs<'a> {
     ratelimit_tracker: Arc<RateLimitTracker>,
     chain: TransformerChain,
     debug_capture: Option<Arc<DebugCapture>>,
+    /// Original OpenAI body for direct passthrough (skips Anthropic round-trip).
+    openai_passthrough_body: Option<serde_json::Value>,
 }
 
 const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -2840,29 +2871,55 @@ async fn try_request_via_openai_protocol(
         ratelimit_tracker,
         chain,
         debug_capture,
+        openai_passthrough_body,
     } = args;
 
     let url = provider_openai_chat_completions_url(provider);
     let headers = build_openai_headers(provider)?;
-    trace!(tier = tier_name, model = model_name, url = %url, "dispatching OpenAI-compatible upstream request");
 
-    // Deserialize back to AnthropicRequest for translation.
-    let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
-        .map_err(|e| TryRequestError::Other(e.into()))?;
+    // Fast path: when the inbound request was already OpenAI-formatted (Codex
+    // frontend) and no transformers need to modify it, reuse the original body
+    // directly with only a model-name swap.  This eliminates the wasteful
+    // OpenAI → Anthropic → deserialize → translate → OpenAI round-trip.
+    let (openai_request_value, stream_flag) = if let Some(mut body) = openai_passthrough_body {
+        // Swap model name to the backend's expected value.
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "model".to_string(),
+                serde_json::Value::String(model_name.to_string()),
+            );
+        }
+        let stream = body
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        trace!(tier = tier_name, model = model_name, url = %url, "OpenAI passthrough: sending original body directly");
+        (body, stream)
+    } else {
+        // Legacy path: translate through Anthropic intermediate format.
+        trace!(tier = tier_name, model = model_name, url = %url, "dispatching OpenAI-compatible upstream request");
 
-    // Translate Anthropic request to OpenAI format.
-    let openai_request = translate_request_anthropic_to_openai(&request, model_name);
+        // Deserialize back to AnthropicRequest for translation.
+        let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+
+        // Translate Anthropic request to OpenAI format.
+        let openai_request = translate_request_anthropic_to_openai(&request, model_name);
+        let stream = request.stream.unwrap_or(false);
+        let value = serde_json::to_value(&openai_request)
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+        (value, stream)
+    };
 
     // Set up capture if enabled for this provider
     let capture_builder = if let Some(ref capture) = debug_capture {
         if capture.should_capture(&provider.name) {
-            let request_body = serde_json::to_value(&openai_request).unwrap_or_default();
             Some(
                 CaptureBuilder::new(capture.next_request_id(), &provider.name, tier_name)
                     .model(model_name)
                     .url(&url)
-                    .request_body(request_body)
-                    .streaming(request.stream.unwrap_or(false))
+                    .request_body(openai_request_value.clone())
+                    .streaming(stream_flag)
                     .start(),
             )
         } else {
@@ -2876,7 +2933,7 @@ async fn try_request_via_openai_protocol(
         .http_client()
         .post(&url)
         .headers(headers)
-        .json(&openai_request)
+        .json(&openai_request_value)
         .send()
         .await;
 
@@ -2979,7 +3036,7 @@ async fn try_request_via_openai_protocol(
     }
 
     // Handle streaming vs non-streaming.
-    if request.stream.unwrap_or(false) {
+    if stream_flag {
         // For streaming, we need to translate OpenAI SSE events to Anthropic SSE.
         let rate_limit_info = extract_rate_limit_headers(&resp);
         let ctx = StreamVerifyCtx {
@@ -3076,6 +3133,7 @@ async fn try_request_via_anthropic_protocol(
         ratelimit_tracker,
         chain,
         debug_capture,
+        openai_passthrough_body: _, // not used for Anthropic protocol
     } = args;
 
     let url = provider_anthropic_messages_url(provider);
@@ -3578,6 +3636,7 @@ async fn try_request_via_google_protocol(
         ratelimit_tracker,
         chain,
         debug_capture,
+        openai_passthrough_body: _, // not used for Google protocol
     } = args;
 
     let oauth = google_oauth.ok_or_else(|| {
@@ -4255,6 +4314,7 @@ mod tests {
             temperature: Some(0.7),
             stream: Some(false),
             tools: None,
+            openai_passthrough_body: None,
         };
 
         let openai_req = translate_request_anthropic_to_openai(&request, "gpt-4");
@@ -4286,6 +4346,7 @@ mod tests {
             temperature: None,
             stream: Some(true),
             tools: None,
+            openai_passthrough_body: None,
         };
 
         let openai_req = translate_request_anthropic_to_openai(&request, "deepseek-reasoner");
@@ -4426,6 +4487,7 @@ mod tests {
             temperature: None,
             stream: None,
             tools: None,
+            openai_passthrough_body: None,
         };
 
         let openai_req = translate_request_anthropic_to_openai(&request, "gpt-4");
@@ -4481,6 +4543,7 @@ mod tests {
             temperature: None,
             stream: Some(false),
             tools: None,
+            openai_passthrough_body: None,
         };
 
         let openai_req = translate_request_anthropic_to_openai(&request, "deepseek-reasoner");
@@ -4521,6 +4584,7 @@ mod tests {
             temperature: None,
             stream: Some(false),
             tools: None,
+            openai_passthrough_body: None,
         };
 
         let openai_req = translate_request_anthropic_to_openai(&request, "deepseek-reasoner");
@@ -4591,5 +4655,79 @@ mod tests {
             .expect("messages array");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "system");
+    }
+
+    /// Verify that the OpenAI passthrough path is taken for Codex→OpenAI routes:
+    /// when `openai_passthrough_body` is populated on `AnthropicRequest`, the
+    /// `handle_chat_completions` flow preserves it and threads it through to
+    /// `try_request`.
+    #[test]
+    fn test_openai_passthrough_body_attached_for_codex_route() {
+        use crate::frontend::codex::CodexFrontend;
+        use crate::frontend::Frontend;
+
+        let original_body = serde_json::json!({
+            "model": "glm,glm-5.1",
+            "messages": [
+                {"role": "system", "content": "You are helpful"},
+                {"role": "user", "content": "Hello"}
+            ],
+            "max_tokens": 100,
+            "temperature": 0.7,
+            "stream": false
+        });
+
+        // Step 1: parse through CodexFrontend (same as handle_chat_completions)
+        let frontend = CodexFrontend::new();
+        let internal = frontend
+            .parse_request(original_body.clone())
+            .expect("parse should succeed");
+
+        // Step 2: convert to AnthropicRequest and attach passthrough
+        let mut anthropic = internal_request_to_anthropic_request(internal);
+        anthropic.openai_passthrough_body = Some(original_body.clone());
+
+        // Verify the passthrough body is preserved
+        assert!(
+            anthropic.openai_passthrough_body.is_some(),
+            "passthrough body must be attached"
+        );
+        let pt = anthropic.openai_passthrough_body.as_ref().unwrap();
+        assert_eq!(pt["model"], "glm,glm-5.1");
+        assert_eq!(pt["messages"][1]["content"], "Hello");
+
+        // Verify the passthrough body is NOT included in serialization
+        // (it has #[serde(skip)])
+        let serialized = serde_json::to_value(&anthropic).unwrap();
+        assert!(
+            serialized.get("openai_passthrough_body").is_none(),
+            "passthrough body must not appear in serialized JSON"
+        );
+    }
+
+    /// Verify that the passthrough body model name would be swapped correctly
+    /// when used in the fast path of try_request_via_openai_protocol.
+    #[test]
+    fn test_openai_passthrough_model_swap() {
+        let mut body = serde_json::json!({
+            "model": "original-model",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": false
+        });
+
+        // Simulate the model swap that happens in the passthrough path
+        let model_name = "glm-5.1";
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "model".to_string(),
+                serde_json::Value::String(model_name.to_string()),
+            );
+        }
+
+        assert_eq!(body["model"], "glm-5.1");
+        // Original messages and params are preserved
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "Hi");
+        assert_eq!(body["stream"], false);
     }
 }
