@@ -14,15 +14,31 @@ pub enum FrontendType {
 
 /// Detect the request frontend using lightweight format heuristics.
 ///
-/// Rules:
-/// - Claude Code: any `anthropic-*` header OR body has Anthropic format (top-level `model` + `messages` without `role`)
-/// - Codex: `User-Agent` contains `codex` OR body has OpenAI format (`messages` with `role`)
-/// - Default: Codex (primary execution engine).
+/// Rules (in priority order):
+/// 1. Definitive header signals win: `anthropic-*` → ClaudeCode, `codex` User-Agent → Codex
+/// 2. When both header signals conflict → Codex (explicit Codex UA overrides anthropic headers)
+/// 3. Body-only heuristics: Anthropic format (model+messages) without OpenAI role fields → ClaudeCode
+/// 4. Default: Codex
+///
+/// Note: The Anthropic Messages API includes `role` on every message, which overlaps
+/// with OpenAI's format. Header-based detection takes priority to resolve this ambiguity.
 pub fn detect_frontend(headers: &HeaderMap, body: &Value) -> FrontendType {
-    let claude_signal = has_anthropic_headers(headers) || has_anthropic_format(body);
-    let codex_signal = has_codex_user_agent(headers) || has_openai_format(body);
+    let has_anthropic_hdrs = has_anthropic_headers(headers);
+    let has_codex_ua = has_codex_user_agent(headers);
 
-    if claude_signal && !codex_signal {
+    // Header signals are definitive — resolve conflicts at the header level first.
+    if has_anthropic_hdrs && !has_codex_ua {
+        return FrontendType::ClaudeCode;
+    }
+    if has_codex_ua {
+        return FrontendType::Codex;
+    }
+
+    // No header signals — fall back to body format heuristics.
+    let claude_body = has_anthropic_format(body);
+    let codex_body = has_openai_format(body);
+
+    if claude_body && !codex_body {
         FrontendType::ClaudeCode
     } else {
         FrontendType::Codex
@@ -137,5 +153,21 @@ mod tests {
             detect_frontend(&headers, &json!({"other": true})),
             FrontendType::Codex
         );
+    }
+
+    #[test]
+    fn detects_claude_code_when_anthropic_headers_with_role_in_body() {
+        // Real-world case: Claude Code CLI sends anthropic-version header
+        // AND the Anthropic Messages API includes "role" on every message,
+        // which overlaps with OpenAI format. Headers must take priority.
+        let mut headers = HeaderMap::new();
+        headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
+        let body = json!({
+            "model": "zai,glm-5.1",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        assert_eq!(detect_frontend(&headers, &body), FrontendType::ClaudeCode);
     }
 }
