@@ -1,0 +1,803 @@
+use axum::body::Body;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use std::sync::Arc;
+use tracing::{trace, warn};
+
+use super::streaming::{stream_anthropic_response_with_tracking, stream_response_translated};
+use super::translate_request::translate_request_anthropic_to_openai;
+use super::translate_response::{build_transformer_chain, translate_response_openai_to_anthropic};
+use super::types::*;
+use crate::config::{Config, ProviderProtocol};
+use crate::debug_capture::{CaptureBuilder, DebugCapture};
+use crate::metrics::{
+    record_rate_limit_backoff, record_rate_limit_hit, record_usage, verify_token_usage,
+};
+use crate::ratelimit::RateLimitTracker;
+use crate::sse::StreamVerifyCtx;
+use crate::transform::openai_to_anthropic::OpenAiToAnthropicTransformer;
+use crate::transformer::{Transformer, TransformerChain, TransformerRegistry};
+
+/// Extract rate limit information from upstream response headers.
+pub(super) fn extract_rate_limit_headers(
+    resp: &reqwest::Response,
+) -> (Option<u32>, Option<std::time::Instant>) {
+    let remaining = resp
+        .headers()
+        .get("x-ratelimit-remaining")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u32>().ok());
+
+    let reset_at = resp
+        .headers()
+        .get("x-ratelimit-reset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|ts| {
+            std::time::Instant::now()
+                + std::time::Duration::from_secs(
+                    ts.saturating_sub(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
+                )
+        });
+
+    (remaining, reset_at)
+}
+
+pub(super) struct TryRequestArgs<'a> {
+    pub(super) config: &'a Config,
+    pub(super) registry: &'a TransformerRegistry,
+    pub(super) request: &'a AnthropicRequest,
+    pub(super) tier: &'a str,
+    pub(super) tier_name: &'a str,
+    pub(super) local_estimate: u64,
+    pub(super) ratelimit_tracker: Arc<RateLimitTracker>,
+    pub(super) debug_capture: Option<Arc<DebugCapture>>,
+    /// Original OpenAI request body for passthrough to OpenAI-compatible backends.
+    pub(super) openai_passthrough_body: Option<&'a serde_json::Value>,
+}
+
+pub(super) async fn try_request(args: TryRequestArgs<'_>) -> Result<Response, TryRequestError> {
+    let TryRequestArgs {
+        config,
+        registry,
+        request,
+        tier,
+        tier_name,
+        local_estimate,
+        ratelimit_tracker,
+        debug_capture,
+        openai_passthrough_body,
+    } = args;
+    let provider = config.resolve_provider(tier).ok_or_else(|| {
+        TryRequestError::Other(anyhow::anyhow!("Provider not found for tier: {}", tier))
+    })?;
+
+    // Build transformer chain from provider config
+    let chain = build_transformer_chain(registry, provider, tier.split(',').nth(1).unwrap_or(tier));
+
+    // Extract the actual model name from the tier (format: "provider,model")
+    let model_name = tier.split(',').nth(1).unwrap_or(tier);
+
+    // Apply request transformers if chain is not empty
+    let transformed_request = if chain.is_empty() {
+        serde_json::to_value(request).map_err(|e| TryRequestError::Other(e.into()))?
+    } else {
+        let req_value =
+            serde_json::to_value(request).map_err(|e| TryRequestError::Other(e.into()))?;
+        chain
+            .apply_request(req_value)
+            .map_err(TryRequestError::Other)?
+    };
+
+    // Only use passthrough when the chain has no transformers (transformers may
+    // modify the Anthropic-shaped payload in ways we need to honour).
+    let effective_passthrough = if chain.is_empty() {
+        openai_passthrough_body.cloned()
+    } else {
+        None
+    };
+
+    match provider.protocol {
+        ProviderProtocol::Openai => {
+            try_request_via_openai_protocol(
+                config,
+                provider,
+                TryRequestProtocolArgs {
+                    transformed_request,
+                    model_name,
+                    tier_name,
+                    local_estimate,
+                    ratelimit_tracker,
+                    chain,
+                    debug_capture,
+                    openai_passthrough_body: effective_passthrough,
+                },
+            )
+            .await
+        }
+        ProviderProtocol::Anthropic => {
+            try_request_via_anthropic_protocol(
+                config,
+                provider,
+                TryRequestProtocolArgs {
+                    transformed_request,
+                    model_name,
+                    tier_name,
+                    local_estimate,
+                    ratelimit_tracker,
+                    chain,
+                    debug_capture,
+                    openai_passthrough_body: None,
+                },
+            )
+            .await
+        }
+    }
+}
+
+pub(super) struct TryRequestProtocolArgs<'a> {
+    pub(super) transformed_request: serde_json::Value,
+    pub(super) model_name: &'a str,
+    pub(super) tier_name: &'a str,
+    pub(super) local_estimate: u64,
+    pub(super) ratelimit_tracker: Arc<RateLimitTracker>,
+    pub(super) chain: TransformerChain,
+    pub(super) debug_capture: Option<Arc<DebugCapture>>,
+    /// Original OpenAI body for direct passthrough (skips Anthropic round-trip).
+    pub(super) openai_passthrough_body: Option<serde_json::Value>,
+}
+
+pub(super) const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
+
+pub(super) fn provider_endpoint_url(provider: &crate::config::Provider, endpoint: &str) -> String {
+    let base = provider.api_base_url.trim_end_matches('/');
+    let endpoint = endpoint.trim_start_matches('/');
+    if base.ends_with(endpoint) {
+        base.to_string()
+    } else {
+        format!("{}/{}", base, endpoint)
+    }
+}
+
+pub(super) fn provider_openai_chat_completions_url(provider: &crate::config::Provider) -> String {
+    provider_endpoint_url(provider, "chat/completions")
+}
+
+pub(super) fn provider_anthropic_messages_url(provider: &crate::config::Provider) -> String {
+    provider_endpoint_url(provider, "messages")
+}
+
+pub(super) fn reqwest_status_to_axum(status: reqwest::StatusCode) -> StatusCode {
+    StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
+}
+
+pub(super) fn insert_ccr_tier_header(response: &mut Response, tier_name: &str) {
+    response.headers_mut().insert(
+        "x-ccr-tier",
+        tier_name
+            .parse()
+            .unwrap_or(axum::http::HeaderValue::from_static("unknown")),
+    );
+}
+
+pub(super) fn build_openai_headers(
+    provider: &crate::config::Provider,
+) -> Result<reqwest::header::HeaderMap, TryRequestError> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "Authorization",
+        format!("Bearer {}", provider.api_key).parse().map_err(
+            |e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            },
+        )?,
+    );
+    headers.insert(
+        "Content-Type",
+        "application/json"
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+
+    // OpenRouter attribution headers for usage tracking
+    // See: https://openrouter.ai/docs/api-reference/overview
+    if provider.name.to_lowercase() == "openrouter"
+        || provider.api_base_url.contains("openrouter.ai")
+    {
+        headers.insert(
+            "HTTP-Referer",
+            "https://github.com/RESMP-DEV/ccr-rust".parse().map_err(
+                |e: reqwest::header::InvalidHeaderValue| {
+                    TryRequestError::Other(anyhow::anyhow!("{}", e))
+                },
+            )?,
+        );
+        headers.insert(
+            "X-Title",
+            "ccr-rust"
+                .parse()
+                .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                    TryRequestError::Other(anyhow::anyhow!("{}", e))
+                })?,
+        );
+    }
+
+    Ok(headers)
+}
+
+pub(super) fn build_anthropic_headers(
+    provider: &crate::config::Provider,
+) -> Result<reqwest::header::HeaderMap, TryRequestError> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "x-api-key",
+        provider
+            .api_key
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+    headers.insert(
+        "anthropic-version",
+        provider
+            .anthropic_version
+            .as_deref()
+            .unwrap_or(DEFAULT_ANTHROPIC_VERSION)
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+    headers.insert(
+        "Content-Type",
+        "application/json"
+            .parse()
+            .map_err(|e: reqwest::header::InvalidHeaderValue| {
+                TryRequestError::Other(anyhow::anyhow!("{}", e))
+            })?,
+    );
+    Ok(headers)
+}
+
+pub(super) async fn try_request_via_openai_protocol(
+    config: &Config,
+    provider: &crate::config::Provider,
+    args: TryRequestProtocolArgs<'_>,
+) -> Result<Response, TryRequestError> {
+    let TryRequestProtocolArgs {
+        transformed_request,
+        model_name,
+        tier_name,
+        local_estimate,
+        ratelimit_tracker,
+        chain,
+        debug_capture,
+        openai_passthrough_body,
+    } = args;
+
+    let url = provider_openai_chat_completions_url(provider);
+    let headers = build_openai_headers(provider)?;
+
+    // Fast path: when the inbound request was already OpenAI-formatted (Codex
+    // frontend) and no transformers need to modify it, reuse the original body
+    // directly with only a model-name swap.  This eliminates the wasteful
+    // OpenAI → Anthropic → deserialize → translate → OpenAI round-trip.
+    let (openai_request_value, stream_flag) = if let Some(mut body) = openai_passthrough_body {
+        // Swap model name to the backend's expected value.
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "model".to_string(),
+                serde_json::Value::String(model_name.to_string()),
+            );
+        }
+        let stream = body
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        trace!(tier = tier_name, model = model_name, url = %url, "OpenAI passthrough: sending original body directly");
+        (body, stream)
+    } else {
+        // Legacy path: translate through Anthropic intermediate format.
+        trace!(tier = tier_name, model = model_name, url = %url, "dispatching OpenAI-compatible upstream request");
+
+        // Deserialize back to AnthropicRequest for translation.
+        let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+
+        // Translate Anthropic request to OpenAI format.
+        let openai_request = translate_request_anthropic_to_openai(&request, model_name);
+        let stream = request.stream.unwrap_or(false);
+        let value =
+            serde_json::to_value(&openai_request).map_err(|e| TryRequestError::Other(e.into()))?;
+        (value, stream)
+    };
+
+    // Set up capture if enabled for this provider
+    let capture_builder = if let Some(ref capture) = debug_capture {
+        if capture.should_capture(&provider.name) {
+            Some(
+                CaptureBuilder::new(capture.next_request_id(), &provider.name, tier_name)
+                    .model(model_name)
+                    .url(&url)
+                    .request_body(openai_request_value.clone())
+                    .streaming(stream_flag)
+                    .start(),
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let resp = config
+        .http_client()
+        .post(&url)
+        .headers(headers)
+        .json(&openai_request_value)
+        .send()
+        .await;
+
+    // Handle connection errors with capture
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            // Record capture on connection failure
+            if let (Some(builder), Some(capture)) = (capture_builder, debug_capture) {
+                let interaction = builder.complete_with_error(e.to_string());
+                if let Err(capture_err) = capture.record(interaction).await {
+                    warn!("Failed to record debug capture: {}", capture_err);
+                }
+            }
+            return Err(TryRequestError::Other(e.into()));
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+
+        // For 429 rate limit, pass through the response to allow proper error handling upstream
+        // This allows the Responses API to return structured rate limit errors to clients
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // Parse Retry-After header if present
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(std::time::Duration::from_secs);
+
+            // Record the rate limit hit for tracking
+            record_rate_limit_hit(tier_name);
+            ratelimit_tracker.record_429(tier_name, retry_after);
+            record_rate_limit_backoff(tier_name);
+
+            // Pass through the 429 response as-is so it can be handled by response converters
+            let mut builder =
+                axum::response::Response::builder().status(reqwest_status_to_axum(status));
+
+            // Copy headers
+            for (key, value) in resp.headers() {
+                if let Ok(name) = axum::http::HeaderName::from_bytes(key.as_str().as_bytes()) {
+                    if let Ok(val) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                        builder = builder.header(name, val);
+                    }
+                }
+            }
+
+            // Insert x-ccr-tier header
+            builder = builder.header("x-ccr-tier", tier_name);
+
+            let body_bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| TryRequestError::Other(e.into()))?;
+
+            // Normalize the error response body to include required fields like 'code': 'rate_limited'
+            let normalized_body = if let Ok(mut error_json) =
+                serde_json::from_slice::<serde_json::Value>(&body_bytes)
+            {
+                if let Some(error_obj) = error_json.get_mut("error").and_then(|e| e.as_object_mut())
+                {
+                    error_obj.insert(
+                        "type".to_string(),
+                        serde_json::Value::String("rate_limit_error".to_string()),
+                    );
+                    error_obj.insert(
+                        "code".to_string(),
+                        serde_json::Value::String("rate_limited".to_string()),
+                    );
+                    if let Some(retry_after_secs) = retry_after {
+                        error_obj.insert(
+                            "retry_after".to_string(),
+                            serde_json::json!(retry_after_secs.as_secs()),
+                        );
+                    }
+                }
+                serde_json::to_vec(&error_json).unwrap_or(body_bytes.to_vec())
+            } else {
+                body_bytes.to_vec()
+            };
+
+            return builder.body(Body::from(normalized_body)).map_err(|e| {
+                TryRequestError::Other(anyhow::anyhow!("Failed to build response: {}", e))
+            });
+        }
+
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+        return Err(TryRequestError::Other(anyhow::anyhow!(
+            "Provider returned {} from {}: {}",
+            status,
+            url,
+            body
+        )));
+    }
+
+    // Handle streaming vs non-streaming.
+    if stream_flag {
+        // For streaming, we need to translate OpenAI SSE events to Anthropic SSE.
+        let rate_limit_info = extract_rate_limit_headers(&resp);
+        let ctx = StreamVerifyCtx {
+            tier_name: tier_name.to_string(),
+            local_estimate,
+            ratelimit_tracker: Some(ratelimit_tracker.clone()),
+            rate_limit_info: Some(rate_limit_info),
+        };
+        Ok(
+            stream_response_translated(
+                resp,
+                config.sse_buffer_size(),
+                Some(ctx),
+                model_name,
+                chain,
+            )
+            .await,
+        )
+    } else {
+        // Extract rate limit headers for non-streaming.
+        let rate_limit_info = extract_rate_limit_headers(&resp);
+        ratelimit_tracker.record_success(tier_name, rate_limit_info.0, rate_limit_info.1);
+
+        // For non-streaming, translate the full response.
+        let resp_status = resp.status().as_u16();
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+        let body_str = String::from_utf8_lossy(&body);
+
+        // Record capture for non-streaming response
+        if let (Some(builder), Some(capture)) = (capture_builder, debug_capture.clone()) {
+            let interaction = builder.complete(resp_status, &body_str, None, None);
+            if let Err(capture_err) = capture.record(interaction).await {
+                warn!("Failed to record debug capture: {}", capture_err);
+            }
+        }
+
+        // Try to parse as OpenAI response and translate.
+        if let Ok(openai_resp) = serde_json::from_slice::<OpenAIResponse>(&body) {
+            // Record usage from the response.
+            if let Some(ref usage) = openai_resp.usage {
+                record_usage(
+                    tier_name,
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                    0, // OpenAI doesn't have cache fields in the same way
+                    0,
+                );
+                verify_token_usage(tier_name, local_estimate, usage.prompt_tokens);
+            }
+
+            // Translate to Anthropic format.
+            let anthropic_resp = translate_response_openai_to_anthropic(openai_resp, model_name);
+
+            // Apply response transformers if chain is not empty.
+            let final_resp = if chain.is_empty() {
+                anthropic_resp
+            } else {
+                let resp_value = serde_json::to_value(&anthropic_resp)
+                    .map_err(|e| TryRequestError::Other(e.into()))?;
+                let transformed = chain
+                    .apply_response(resp_value)
+                    .map_err(TryRequestError::Other)?;
+                serde_json::from_value::<AnthropicResponse>(transformed).unwrap_or(anthropic_resp)
+            };
+
+            let response_body =
+                serde_json::to_vec(&final_resp).map_err(|e| TryRequestError::Other(e.into()))?;
+
+            let mut response = (StatusCode::OK, response_body).into_response();
+            insert_ccr_tier_header(&mut response, tier_name);
+            return Ok(response);
+        }
+
+        // Fallback: pass through original response if translation fails.
+        let mut response = (StatusCode::OK, body).into_response();
+        insert_ccr_tier_header(&mut response, tier_name);
+        Ok(response)
+    }
+}
+
+pub(super) async fn try_request_via_anthropic_protocol(
+    config: &Config,
+    provider: &crate::config::Provider,
+    args: TryRequestProtocolArgs<'_>,
+) -> Result<Response, TryRequestError> {
+    let TryRequestProtocolArgs {
+        transformed_request,
+        model_name,
+        tier_name,
+        local_estimate,
+        ratelimit_tracker,
+        chain,
+        debug_capture,
+        openai_passthrough_body: _, // not used for Anthropic protocol
+    } = args;
+
+    let url = provider_anthropic_messages_url(provider);
+    let headers = build_anthropic_headers(provider)?;
+    trace!(tier = tier_name, model = model_name, url = %url, "dispatching Anthropic-compatible upstream request");
+
+    let request: AnthropicRequest = serde_json::from_value(transformed_request.clone())
+        .map_err(|e| TryRequestError::Other(e.into()))?;
+
+    let needs_normalization = request
+        .messages
+        .iter()
+        .any(|message| message.role == "tool");
+
+    // Only canonicalize when OpenAI-style tool result messages are present.
+    // Native Anthropic payloads should skip this round-trip to preserve
+    // provider-specific content blocks (e.g., cache_control, thinking blocks).
+    let mut normalized_request_value = if needs_normalization {
+        let openai_request = translate_request_anthropic_to_openai(&request, model_name);
+        let openai_request_value =
+            serde_json::to_value(openai_request).map_err(|e| TryRequestError::Other(e.into()))?;
+        OpenAiToAnthropicTransformer
+            .transform_request(openai_request_value)
+            .map_err(TryRequestError::Other)?
+    } else {
+        transformed_request
+    };
+
+    if let Some(obj) = normalized_request_value.as_object_mut() {
+        obj.insert(
+            "model".to_string(),
+            serde_json::Value::String(model_name.to_string()),
+        );
+    }
+
+    let request: AnthropicRequest = serde_json::from_value(normalized_request_value.clone())
+        .map_err(|e| TryRequestError::Other(e.into()))?;
+
+    // Set up capture if enabled for this provider
+    let capture_builder = if let Some(ref capture) = debug_capture {
+        if capture.should_capture(&provider.name) {
+            Some(
+                CaptureBuilder::new(capture.next_request_id(), &provider.name, tier_name)
+                    .model(model_name)
+                    .url(&url)
+                    .request_body(normalized_request_value)
+                    .streaming(request.stream.unwrap_or(false))
+                    .start(),
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let resp = config
+        .http_client()
+        .post(&url)
+        .headers(headers)
+        .json(&request)
+        .send()
+        .await;
+
+    // Handle connection errors with capture
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            // Record capture on connection failure
+            if let (Some(builder), Some(capture)) = (capture_builder, debug_capture) {
+                let interaction = builder.complete_with_error(e.to_string());
+                if let Err(capture_err) = capture.record(interaction).await {
+                    warn!("Failed to record debug capture: {}", capture_err);
+                }
+            }
+            return Err(TryRequestError::Other(e.into()));
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+
+        // For 429 rate limit, pass through the response to allow proper error handling upstream
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(std::time::Duration::from_secs);
+
+            // Record the rate limit hit for tracking
+            record_rate_limit_hit(tier_name);
+            ratelimit_tracker.record_429(tier_name, retry_after);
+            record_rate_limit_backoff(tier_name);
+
+            // Pass through the 429 response as-is
+            let mut builder =
+                axum::response::Response::builder().status(reqwest_status_to_axum(status));
+
+            // Copy headers
+            for (key, value) in resp.headers() {
+                if let Ok(name) = axum::http::HeaderName::from_bytes(key.as_str().as_bytes()) {
+                    if let Ok(val) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                        builder = builder.header(name, val);
+                    }
+                }
+            }
+
+            // Insert x-ccr-tier header
+            builder = builder.header("x-ccr-tier", tier_name);
+
+            let body_bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| TryRequestError::Other(e.into()))?;
+
+            // Normalize the error response body to include required fields like 'code': 'rate_limited'
+            let normalized_body = if let Ok(mut error_json) =
+                serde_json::from_slice::<serde_json::Value>(&body_bytes)
+            {
+                if let Some(error_obj) = error_json.get_mut("error").and_then(|e| e.as_object_mut())
+                {
+                    error_obj.insert(
+                        "type".to_string(),
+                        serde_json::Value::String("rate_limit_error".to_string()),
+                    );
+                    error_obj.insert(
+                        "code".to_string(),
+                        serde_json::Value::String("rate_limited".to_string()),
+                    );
+                    if let Some(retry_after_secs) = retry_after {
+                        error_obj.insert(
+                            "retry_after".to_string(),
+                            serde_json::json!(retry_after_secs.as_secs()),
+                        );
+                    }
+                }
+                serde_json::to_vec(&error_json).unwrap_or(body_bytes.to_vec())
+            } else {
+                body_bytes.to_vec()
+            };
+
+            return builder.body(Body::from(normalized_body)).map_err(|e| {
+                TryRequestError::Other(anyhow::anyhow!("Failed to build response: {}", e))
+            });
+        }
+
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+        return Err(TryRequestError::Other(anyhow::anyhow!(
+            "Provider returned {} from {}: {}",
+            status,
+            url,
+            body
+        )));
+    }
+
+    if request.stream.unwrap_or(false) {
+        // Use streaming token tracking for Anthropic protocol
+        let rate_limit_info = extract_rate_limit_headers(&resp);
+        let ctx = StreamVerifyCtx {
+            tier_name: tier_name.to_string(),
+            local_estimate,
+            ratelimit_tracker: Some(ratelimit_tracker.clone()),
+            rate_limit_info: Some(rate_limit_info),
+        };
+
+        let mut response =
+            stream_anthropic_response_with_tracking(resp, config.sse_buffer_size(), ctx, chain)
+                .await;
+        insert_ccr_tier_header(&mut response, tier_name);
+        Ok(response)
+    } else {
+        let rate_limit_info = extract_rate_limit_headers(&resp);
+        ratelimit_tracker.record_success(tier_name, rate_limit_info.0, rate_limit_info.1);
+
+        let resp_status = resp.status().as_u16();
+        let status = reqwest_status_to_axum(resp.status());
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| TryRequestError::Other(e.into()))?;
+        let body_str = String::from_utf8_lossy(&body);
+
+        // Record capture for non-streaming Anthropic response
+        if let (Some(builder), Some(capture)) = (capture_builder, debug_capture.clone()) {
+            let interaction = builder.complete(resp_status, &body_str, None, None);
+            if let Err(capture_err) = capture.record(interaction).await {
+                warn!("Failed to record debug capture: {}", capture_err);
+            }
+        }
+
+        if let Ok(anthropic_resp) = serde_json::from_slice::<AnthropicResponse>(&body) {
+            // Estimate tokens when provider returns zeros (common for some Anthropic-compatible APIs)
+            let mut input_tokens = anthropic_resp.usage.input_tokens;
+            let mut output_tokens = anthropic_resp.usage.output_tokens;
+
+            // Use pre-request estimate for input if provider returned 0
+            if input_tokens == 0 && local_estimate > 0 {
+                input_tokens = local_estimate;
+                warn!(
+                    tier = tier_name,
+                    "Provider returned 0 input_tokens, using pre-request estimate: {}",
+                    input_tokens
+                );
+            }
+
+            // Estimate output tokens from response content if provider returned 0
+            if output_tokens == 0 {
+                let content_len: usize = anthropic_resp
+                    .content
+                    .iter()
+                    .map(|block| match block {
+                        AnthropicContentBlock::Text { text } => text.len(),
+                        AnthropicContentBlock::Thinking { thinking, .. } => thinking.len(),
+                        AnthropicContentBlock::ToolUse { input, .. } => input.to_string().len(),
+                    })
+                    .sum();
+                if content_len > 0 {
+                    output_tokens = (content_len / 4).max(1) as u64;
+                    warn!(
+                        tier = tier_name,
+                        "Provider returned 0 output_tokens, estimated: {} (from {} chars)",
+                        output_tokens,
+                        content_len
+                    );
+                }
+            }
+
+            record_usage(tier_name, input_tokens, output_tokens, 0, 0);
+            verify_token_usage(tier_name, local_estimate, input_tokens);
+
+            let final_resp = if chain.is_empty() {
+                anthropic_resp
+            } else {
+                let resp_value = serde_json::to_value(&anthropic_resp)
+                    .map_err(|e| TryRequestError::Other(e.into()))?;
+                let transformed = chain
+                    .apply_response(resp_value)
+                    .map_err(TryRequestError::Other)?;
+                serde_json::from_value::<AnthropicResponse>(transformed).unwrap_or(anthropic_resp)
+            };
+
+            let response_body =
+                serde_json::to_vec(&final_resp).map_err(|e| TryRequestError::Other(e.into()))?;
+            let mut response = (StatusCode::OK, response_body).into_response();
+            insert_ccr_tier_header(&mut response, tier_name);
+            return Ok(response);
+        }
+
+        let mut response = (status, body).into_response();
+        insert_ccr_tier_header(&mut response, tier_name);
+        Ok(response)
+    }
+}

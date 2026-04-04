@@ -1,14 +1,14 @@
-//! Streaming turn capture state machine for tracking multi-thread Code Assist responses.
+//! Streaming turn capture state machine for tracking multi-thread responses.
 //!
 //! Inspired by the `TurnCaptureState` in codex-plugin-cc (codex.mjs lines 297-605).
 //! Tracks threads, subagent collaboration, and completion inference when proxying
-//! ccr-gemini Code Assist SSE streams.
+//! SSE streams.
 
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-/// Tracks multi-thread streaming state during a proxied Code Assist turn.
+/// Tracks multi-thread streaming state during a proxied turn.
 #[derive(Debug, Clone)]
 pub struct TurnCaptureState {
     /// The root (main) thread ID that initiated the turn.

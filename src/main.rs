@@ -349,32 +349,6 @@ async fn run_server(
         None
     };
 
-    // Initialize Google OAuth cache if any provider uses the Google protocol.
-    let google_oauth = if let Some(google_provider) = config
-        .providers()
-        .iter()
-        .find(|p| p.protocol == config::ProviderProtocol::Google)
-    {
-        match ccr_rust::google_oauth::GoogleOAuthCache::from_gemini_creds(
-            google_provider.google_client_id.as_deref(),
-            google_provider.google_client_secret.as_deref(),
-        ) {
-            Ok(cache) => {
-                tracing::info!("Google OAuth cache initialized from ~/.gemini/oauth_creds.json");
-                Some(Arc::new(cache))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to initialize Google OAuth (Google providers will fail): {}",
-                    e
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     let state = AppState {
         config,
         ewma_tracker,
@@ -383,7 +357,6 @@ async fn run_server(
         ratelimit_tracker,
         shutdown_timeout,
         debug_capture,
-        google_oauth,
     };
 
     let app = Router::new()

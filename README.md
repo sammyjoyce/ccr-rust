@@ -229,7 +229,16 @@ Tool filtering: `--include "search_code,read_file"` / `--exclude "dangerous_tool
 src/
 ├── main.rs               # CLI (8 subcommands)
 ├── config.rs             # Config parsing
-├── router.rs             # HTTP handlers, tier selection, failover
+├── router/               # HTTP handlers, tier selection, failover
+│   ├── mod.rs            # handle_messages, handle_preset_messages, list_models
+│   ├── types.rs          # AnthropicRequest, AppState, TryRequestArgs
+│   ├── dispatch.rs       # try_request, protocol dispatch, header building
+│   ├── google.rs         # Google Code Assist protocol
+│   ├── streaming.rs      # SSE streaming response translation
+│   ├── openai_compat.rs  # /v1/chat/completions handler
+│   ├── responses_api.rs  # /v1/responses handler
+│   ├── translate_request.rs   # Anthropic→OpenAI request translation
+│   └── translate_response.rs  # OpenAI→Anthropic response translation
 ├── routing.rs            # EWMA latency tracker
 ├── proxy.rs              # Dynamic backoff scaler
 ├── transformer.rs        # Transformer trait + common impls
@@ -243,7 +252,10 @@ src/
 ├── mcp/                  # MCP server + tool catalog aggregation
 │   ├── server.rs, backend.rs, catalog.rs, protocol.rs
 ├── sse.rs                # SSE frame parser
-├── metrics.rs            # Prometheus + token auditing
+├── metrics/              # Prometheus + token auditing
+│   ├── mod.rs            # Metric definitions, recording functions
+│   ├── handlers.rs       # HTTP handler endpoints (/metrics, /usage, etc.)
+│   └── persistence.rs    # Redis persistence for metrics
 ├── dashboard.rs          # Ratatui TUI
 ├── debug_capture.rs      # Request/response capture
 ├── ratelimit.rs          # Rate limit state + backoff

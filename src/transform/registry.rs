@@ -4,7 +4,7 @@
 //! from factory functions, allowing dynamic instantiation based on configuration.
 
 use super::{
-    AnthropicToOpenaiTransformer, DeepSeekTransformer, GeminiCodeAssistTransformer, GlmTransformer,
+    AnthropicToOpenaiTransformer, DeepSeekTransformer, GlmTransformer,
     KimiTransformer, MaxTokenTransformer, MinimaxTransformer, OpenAiToAnthropicTransformer,
     OutputCompressTransformer, ThinkTagTransformer, ToolCompressTransformer,
 };
@@ -45,8 +45,6 @@ impl TransformerRegistry {
         }
         // Tier 7: DeepSeek Reasoner
         registry.register("deepseek", |_opts| Box::new(DeepSeekTransformer));
-        // Gemini Code Assist (Google protocol)
-        registry.register("gemini", |_opts| Box::new(GeminiCodeAssistTransformer));
 
         // Format conversion transformers
         registry.register("anthropic", |_opts| Box::new(AnthropicToOpenaiTransformer));
@@ -143,13 +141,12 @@ mod tests {
     fn registry_new_registers_provider_transformers() {
         let registry = TransformerRegistry::new();
         assert!(!registry.is_empty());
-        assert_eq!(registry.len(), 12);
+        assert_eq!(registry.len(), 11);
         assert!(registry.has("zai"));
         assert!(registry.has("minimax"));
         assert!(registry.has("moonshot"));
         assert!(registry.has("kimi"));
         assert!(registry.has("deepseek"));
-        assert!(registry.has("gemini"));
         assert!(registry.has("anthropic"));
         assert!(registry.has("openai-to-anthropic"));
         assert!(registry.has("maxtoken"));

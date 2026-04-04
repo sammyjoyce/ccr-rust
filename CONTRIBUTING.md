@@ -79,10 +79,22 @@ src/
 ├── main.rs          # CLI and server setup
 ├── lib.rs           # Module exports
 ├── config.rs        # Config parsing, provider resolution
-├── router.rs        # Request handling, format translation
+├── router/          # Request handling, format translation, failover
+│   ├── mod.rs       # handle_messages, handle_preset_messages, list_models
+│   ├── types.rs     # AnthropicRequest, AppState, TryRequestArgs
+│   ├── dispatch.rs  # try_request, protocol dispatch, header building
+│   ├── google.rs    # Google Code Assist protocol
+│   ├── streaming.rs # SSE streaming response translation
+│   ├── openai_compat.rs   # /v1/chat/completions handler
+│   ├── responses_api.rs   # /v1/responses handler
+│   ├── translate_request.rs   # Anthropic→OpenAI request translation
+│   └── translate_response.rs  # OpenAI→Anthropic response translation
 ├── routing.rs       # EWMA tracking, tier reordering
 ├── sse.rs           # SSE streaming, usage extraction
-├── metrics.rs       # Prometheus metrics, token tracking
+├── metrics/         # Prometheus metrics, token tracking, persistence
+│   ├── mod.rs       # Metric definitions, recording functions
+│   ├── handlers.rs  # HTTP endpoints (/metrics, /usage, /latencies)
+│   └── persistence.rs # Redis persistence for metrics
 └── transformer.rs   # Request/response transformers
 ```
 
@@ -144,7 +156,7 @@ fn mytransformer_does_thing() {
 
 ### Adding a New Metric
 
-1. Define the metric in `src/metrics.rs`:
+1. Define the metric in `src/metrics/mod.rs`:
 
 ```rust
 lazy_static! {
@@ -168,7 +180,7 @@ pub fn record_my_metric(tier: &str) {
 
 ### Adding a New Endpoint
 
-1. Define the handler in `src/router.rs` or new module:
+1. Define the handler in the appropriate `src/router/` submodule (e.g., `dispatch.rs` for protocol handlers, or a new file for new features):
 
 ```rust
 pub async fn my_handler(
