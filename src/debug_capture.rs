@@ -270,7 +270,13 @@ impl DebugCapture {
     }
 
     /// Rotate old capture files if we exceed max_files.
+    /// max_files = 0 means unlimited (no rotation).
     async fn rotate_files(&self) -> Result<()> {
+        // 0 means unlimited — never delete
+        if self.config.max_files == 0 {
+            return Ok(());
+        }
+
         let mut count = self.file_count.write().await;
 
         // Only check periodically (every 100 captures)
