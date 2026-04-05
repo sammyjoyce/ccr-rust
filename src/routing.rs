@@ -1,4 +1,6 @@
 use parking_lot::RwLock;
+use rand::distributions::WeightedIndex;
+use rand::prelude::*;
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info};
@@ -199,11 +201,15 @@ impl EwmaTracker {
             .collect()
     }
 
-    /// Sort tiers using config-aware settings, with optional softmax-based top-K selection.
+    /// Sort tiers using config-aware settings, with weighted random sampling.
     ///
     /// This function calculates logits from EWMA latencies, applies a softmax
-    /// function to get probabilities, and returns the top K tiers sorted by
-    /// probability. If `topK` is not configured, it sorts all available tiers.
+    /// function to get probabilities, then uses weighted random sampling to
+    /// produce a tier ordering that distributes load proportionally.
+    ///
+    /// Low `routing_temperature` (e.g. 0.1) → nearly deterministic (fastest tier wins).
+    /// High `routing_temperature` (e.g. 5.0) → nearly uniform distribution.
+    /// Default temperature is 1.0.
     pub fn sort_tiers_with_config(
         &self,
         tiers: &[String],
@@ -215,18 +221,22 @@ impl EwmaTracker {
         // If top_k is not specified, default to all tiers.
         let top_k = router_config.top_k.unwrap_or(tiers.len());
 
-        // Fallback to simple latency sort if all tiers are unmeasured.
+        // Fallback: shuffle unmeasured tiers so cold-start traffic distributes.
         if state.is_empty() {
-            let entries: Vec<(String, String)> = tiers
+            let mut entries: Vec<(String, String)> = tiers
                 .iter()
                 .map(|tier| (tier.clone(), config.backend_abbreviation_with_config(tier)))
                 .collect();
+
+            // Shuffle so cold-start doesn't always hammer the first tier.
+            let mut rng = rand::thread_rng();
+            entries.shuffle(&mut rng);
 
             if tracing::enabled!(tracing::Level::DEBUG) {
                 let order: Vec<String> = entries.iter().map(|(_, name)| name.clone()).collect();
                 debug!(
                     order = ?order,
-                    "tier routing order (unmeasured, using config order)"
+                    "tier routing order (unmeasured, shuffled)"
                 );
             }
             return entries;
@@ -266,7 +276,7 @@ impl EwmaTracker {
             .map(|(_, _, logit)| (logit - max_logit).exp())
             .sum::<f64>();
 
-        let mut probabilities: Vec<(String, String, f64)> = entries
+        let probabilities: Vec<(String, String, f64)> = entries
             .into_iter()
             .map(|(tier, name, logit)| {
                 let probability = if exp_sum > 0.0 {
@@ -278,23 +288,53 @@ impl EwmaTracker {
             })
             .collect();
 
-        // Sort by probability descending
-        probabilities.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        // Weighted sampling without replacement: draw tiers proportional to
+        // their softmax probabilities. This distributes traffic across backends
+        // instead of always funneling to the fastest one.
+        let mut rng = rand::thread_rng();
+        let weights: Vec<f64> = probabilities.iter().map(|(_, _, p)| *p).collect();
+        let mut result: Vec<(String, String)> = Vec::with_capacity(top_k.min(probabilities.len()));
+        let mut remaining: Vec<(String, String, f64)> = probabilities;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            let order: Vec<String> = probabilities
-                .iter()
-                .map(|(_, name, prob)| format!("{}({:.2}%)", name, prob * 100.0))
-                .collect();
-            debug!(order = ?order, k=top_k, "tier routing order (softmax-based)");
+        for _ in 0..top_k.min(remaining.len().max(1)) {
+            if remaining.is_empty() {
+                break;
+            }
+            if remaining.len() == 1 {
+                let (tier, name, _) = remaining.remove(0);
+                result.push((tier, name));
+                break;
+            }
+
+            let current_weights: Vec<f64> =
+                remaining.iter().map(|(_, _, p)| p.max(1e-12)).collect();
+            match WeightedIndex::new(&current_weights) {
+                Ok(dist) => {
+                    let idx = dist.sample(&mut rng);
+                    let (tier, name, _) = remaining.remove(idx);
+                    result.push((tier, name));
+                }
+                Err(_) => {
+                    // Fallback: take the first remaining
+                    let (tier, name, _) = remaining.remove(0);
+                    result.push((tier, name));
+                }
+            }
         }
 
-        // Truncate to top K and return
-        probabilities
-            .into_iter()
-            .take(top_k)
-            .map(|(tier, name, _)| (tier, name))
-            .collect()
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let order: Vec<String> = result
+                .iter()
+                .enumerate()
+                .map(|(i, (_, name))| {
+                    let prob = weights.get(i).copied().unwrap_or(0.0);
+                    format!("{}({:.1}%)", name, prob * 100.0)
+                })
+                .collect();
+            debug!(order = ?order, k=top_k, "tier routing order (weighted sample)");
+        }
+
+        result
     }
 }
 

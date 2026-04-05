@@ -175,7 +175,7 @@ pub struct OpenAIResponseMessage {
     pub role: String,
     #[serde(default)]
     pub content: Option<serde_json::Value>,
-    #[serde(default, rename = "reasoning_content")]
+    #[serde(default, rename = "reasoning_content", alias = "reasoning")]
     pub reasoning_content: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<OpenAIToolCall>>,
@@ -238,7 +238,7 @@ pub struct OpenAIDelta {
     pub role: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
-    #[serde(default, rename = "reasoning_content")]
+    #[serde(default, rename = "reasoning_content", alias = "reasoning")]
     pub reasoning_content: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<OpenAIStreamToolCall>>,

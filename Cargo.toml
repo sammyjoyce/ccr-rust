@@ -50,10 +50,10 @@ redis = "0.32"
 chrono = "0.4"
 dirs = "6"
 jsonschema = "0.29"
+rand = "0.8"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["async_tokio"] }
-rand = "0.8"
 wiremock = "0.6"
 http-body-util = "0.1"
 tokio-test = "0.4"

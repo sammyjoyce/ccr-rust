@@ -8,6 +8,7 @@ pub use builtin::*;
 
 use crate::config::TransformerEntry;
 use crate::transform::glm::GlmTransformer;
+use crate::transform::kimi::KimiTransformer;
 use crate::transform::minimax::MinimaxTransformer;
 use crate::transform::openai_to_anthropic::OpenAiToAnthropicTransformer;
 use anyhow::Result;
@@ -250,6 +251,7 @@ impl TransformerRegistry {
         registry.register("enhancetool", Arc::new(EnhanceToolTransformer));
         registry.register("thinktag", Arc::new(ThinkTagTransformer));
         registry.register("glm", Arc::new(GlmTransformer::default()));
+        registry.register("kimi", Arc::new(KimiTransformer));
 
         registry
     }
