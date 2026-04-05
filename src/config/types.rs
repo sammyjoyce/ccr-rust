@@ -230,6 +230,13 @@ pub struct Provider {
     /// If not specified, defaults to the provider name.
     #[serde(default)]
     pub tier_name: Option<String>,
+
+    /// Extra headers to include in requests to this provider.
+    ///
+    /// Useful for providers that require specific headers (e.g., `User-Agent`
+    /// for Kimi's coding agent identity check).
+    #[serde(default)]
+    pub extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 impl Provider {

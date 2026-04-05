@@ -229,6 +229,18 @@ pub(super) fn build_openai_headers(
         );
     }
 
+    // Merge provider-level extra headers (e.g., User-Agent for Kimi).
+    if let Some(ref extra) = provider.extra_headers {
+        for (key, value) in extra {
+            if let (Ok(name), Ok(val)) = (
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                value.parse::<reqwest::header::HeaderValue>(),
+            ) {
+                headers.insert(name, val);
+            }
+        }
+    }
+
     Ok(headers)
 }
 
@@ -264,6 +276,19 @@ pub(super) fn build_anthropic_headers(
                 TryRequestError::Other(anyhow::anyhow!("{}", e))
             })?,
     );
+
+    // Merge provider-level extra headers (e.g., User-Agent for Kimi).
+    if let Some(ref extra) = provider.extra_headers {
+        for (key, value) in extra {
+            if let (Ok(name), Ok(val)) = (
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                value.parse::<reqwest::header::HeaderValue>(),
+            ) {
+                headers.insert(name, val);
+            }
+        }
+    }
+
     Ok(headers)
 }
 
