@@ -4,7 +4,7 @@ Multi-protocol AI proxy. Routes Claude Code, Codex, and OpenAI-compatible client
 
 ```
   Claude Code ──┐                    ┌──> Z.AI (GLM-5.1)
-                │  ┌──────────────┐  ├──> Cerebras (gpt-oss-120b)
+                │  ┌──────────────┐  ├──> DigitalOcean (GPT-OSS-20B, Opus, Kimi)
   Codex CLI ────┼──│  CCR-Rust    │──├──> Kimi (K2.5)
                 │  │  :3456       │  ├──> MiniMax (M2.7)
   OpenAI SDK ───┤  └──────────────┘  ├──> DeepSeek
@@ -55,7 +55,7 @@ claude
 | Provider | Models | Protocol | Notes |
 |----------|--------|----------|-------|
 | Z.AI (GLM) | glm-5.1, glm-5 | OpenAI | Needs `anthropic` transformer |
-| Cerebras | gpt-oss-120b | OpenAI | ~3000 tok/s |
+| DigitalOcean | openai-gpt-oss-20b, anthropic-claude-opus-4.6, kimi-k2.5 | OpenAI | Serverless Inference |
 | Qwen | qwen3-coder-next, qwen3.5-plus | OpenAI | |
 | DeepSeek | deepseek-chat, deepseek-reasoner | OpenAI | Needs `deepseek` transformer |
 | MiniMax | MiniMax-M2.7 | Anthropic | Needs `minimax` transformer |
@@ -65,11 +65,11 @@ claude
 Adding a new OpenAI-compatible provider requires config only, no code changes:
 ```json
 {
-    "name": "cerebras",
-    "api_base_url": "https://api.cerebras.ai/v1",
-    "api_key": "${CEREBRAS_API_KEY}",
-    "models": ["gpt-oss-120b"],
-    "tier_name": "ccr-cerebras"
+    "name": "digitalocean",
+    "api_base_url": "https://inference.do-ai.run/v1",
+    "api_key": "${DO_API_KEY}",
+    "models": ["openai-gpt-oss-20b"],
+    "tier_name": "ccr-do-gptoss"
 }
 ```
 
@@ -117,7 +117,7 @@ Requests try tiers in order. On 429, 5xx, or timeout, the next tier is tried aut
 ```json
 {
     "Router": {
-        "tiers": ["zai,glm-5.1", "cerebras,gpt-oss-120b", "minimax,MiniMax-M2.7"],
+        "tiers": ["zai,glm-5.1", "digitalocean,openai-gpt-oss-20b", "minimax,MiniMax-M2.7"],
         "tierRetries": {
             "tier-0": { "max_retries": 5, "base_backoff_ms": 50 },
             "tier-1": { "max_retries": 3, "base_backoff_ms": 100 }

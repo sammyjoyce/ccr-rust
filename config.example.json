@@ -46,15 +46,6 @@
             }
         },
         {
-            "name": "cerebras",
-            "api_base_url": "https://api.cerebras.ai/v1",
-            "api_key": "${CEREBRAS_API_KEY}",
-            "models": [
-                "gpt-oss-120b"
-            ],
-            "tier_name": "ccr-cerebras"
-        },
-        {
             "name": "qwen",
             "_comment": "Alibaba Cloud Model Studio Coding Plan. Use coding-intl.dashscope.aliyuncs.com for subscription plans (sk-sp-xxx keys). Standard DashScope keys (sk-xxx) use dashscope-intl.aliyuncs.com.",
             "api_base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",

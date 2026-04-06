@@ -35,7 +35,7 @@ The config template (`configs/ccr-rust.config.template.json`, installed via `./s
 | `output_compress` | **Enabled** | All providers | Pattern-based compression of build logs, test output, grep results |
 | `thinktag` | **Enabled** | Kimi only | Strips standard `<think>` blocks from reasoning model output |
 | `kimi` | **Enabled** | Kimi only | Extracts Unicode think tokens (◁think▷/◁/think▷) into `reasoning_content` |
-| `enhancetool` | **Disabled** | Not in template | All CCR-Rust providers use server-side caching; `cache_control` annotations are no-ops (see [provider caching landscape](#provider-prompt-caching-landscape)) |
+| `enhancetool` | **Enabled** | Kimi only | Adds `cache_control` annotations. No-op for Kimi's server-side caching, but harmless. Included for Anthropic protocol completeness. |
 
 ### Provider prompt caching landscape
 
@@ -47,7 +47,7 @@ Each provider implements caching differently. None of the CCR-Rust providers use
 | Minimax | Anthropic (`/anthropic/v1`) | **Server-side automatic.** Returns `cache_creation_input_tokens` and `cache_read_input_tokens` in usage. `cache_control` is NOT listed as a supported parameter. | No-op — caching happens automatically server-side. |
 | Z.AI/GLM | OpenAI (via `anthropic` transformer) | **Server-side implicit.** "Preserved Thinking" (`clear_thinking: false`) increases cache hit rates on the Coding Plan endpoint. No explicit caching API. | No-op — `cache_control` is lost in Anthropic→OpenAI conversion. |
 | Gemini | OpenAI-compatible | **Implicit caching** auto-enabled on Gemini 2.5+ (min 1024 tokens). Also supports Explicit caching via separate `CachedContent` API (not `cache_control`). Returns hits in `usage_metadata`. | No-op — uses `cached_content` references, not `cache_control`. |
-| Cerebras | OpenAI | **Server-side automatic.** Returns `prompt_tokens_details.cached_tokens` in response. No request-side caching API. | No-op — OpenAI protocol, no `cache_control` support. |
+| DigitalOcean | OpenAI | **Server-side automatic.** Returns `prompt_tokens_details.cached_tokens` in response. No request-side caching API. | No-op — OpenAI protocol, no `cache_control` support. |
 
 **Key takeaway:** Anthropic-style `cache_control: {type: "ephemeral"}` is only meaningful when talking directly to Anthropic's API (Claude, tier 0), which doesn't route through CCR-Rust. For all CCR-Rust providers, caching happens automatically server-side — `enhancetool` adds harmless but useless annotations. It is excluded from the default config template to avoid implying client-controlled caching where there is none.
 
@@ -58,7 +58,7 @@ Although you can't control caching via `cache_control`, you can improve hit rate
 - **Kimi:** Pass a stable `prompt_cache_key` (session ID or task ID) for cache affinity across multi-turn conversations.
 - **Z.AI/GLM:** Use `clear_thinking: false` (Preserved Thinking) on the Coding Plan endpoint to keep reasoning context intact and increase cache hits.
 - **Gemini:** Place large, stable content at the beginning of prompts. Send similar-prefix requests close together in time.
-- **Minimax/Cerebras:** Caching is fully automatic — no tuning knobs available.
+- **Minimax/DigitalOcean:** Caching is fully automatic — no tuning knobs available.
 
 ### Upgrading existing installs
 
@@ -73,6 +73,11 @@ If you installed CCR-Rust before this change, your `~/.claude-code-router/config
   ]
 }
 ```
+
+**Kimi provider changes:** The template now includes the `kimi` transformer
+(for Unicode think-token extraction), `enhancetool`, and `extra_headers` for
+`User-Agent` forwarding. If your existing config has a `kimi` provider, add
+these manually or re-run `./scripts/ccr-rust.sh install-config`.
 
 ## Output Compression
 

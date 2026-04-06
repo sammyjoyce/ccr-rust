@@ -69,15 +69,6 @@
             "tier_name": "ccr-or"
         },
         {
-            "name": "cerebras",
-            "api_base_url": "https://api.cerebras.ai/v1",
-            "api_key": "${CEREBRAS_API_KEY}",
-            "models": [
-                "gpt-oss-120b"
-            ],
-            "tier_name": "ccr-cerebras"
-        },
-        {
             "name": "gemini",
             "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
             "api_key": "${GEMINI_API_KEY}",
