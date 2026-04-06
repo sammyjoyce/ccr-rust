@@ -84,6 +84,61 @@ Client handling rule:
 - Anthropic `system` field is auto-converted to OpenAI format
 - Verify it's not being filtered by provider
 
+## Pseudo-SSE (`forceNonStreaming`) Issues
+
+### Tool_use blocks silently dropped
+
+**Symptom:** Claude CLI exits with code 1 and logs:
+```
+[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use
+```
+
+All affected tasks show `num_turns=1`, `stop_reason=tool_use`, and no `assistant` message event in the output. The model never gets to use its tools.
+
+**Cause:** When `forceNonStreaming: true` is enabled (the default for AlphaHENG), non-streaming JSON responses from backends are converted to SSE events via `emit_anthropic_sse_events()` in `streaming.rs`. If this function doesn't handle all `AnthropicContentBlock` variants — specifically `ToolUse` and `Thinking` — those blocks are silently dropped. Claude CLI receives `stop_reason: tool_use` but no actual tool content blocks, which it treats as an error.
+
+**Detection:**
+```bash
+# Check captures for tool_use responses that succeeded at the proxy level
+ls ~/.ccr-rust/captures/ | grep kimi
+
+# In a capture, response_body will show valid tool_use blocks:
+python3 -c "
+import json
+with open('~/.ccr-rust/captures/kimi_ccr-kimi_TIMESTAMP.json') as f:
+    data = json.load(f)
+resp = json.loads(data['response_body'])
+print([c['type'] for c in resp['content']])  # Should show ['text', 'tool_use']
+"
+
+# But Claude CLI output shows no assistant message event:
+# Events: [system/init, system/api_retry, result/error_during_execution]
+# (no type=assistant event between init and result = blocks were dropped)
+```
+
+**Fix applied:** `emit_anthropic_sse_events()` now handles all three block types:
+- `Text` → `content_block_start` + `text_delta`
+- `ToolUse` → `content_block_start` (with id/name/empty input) + `input_json_delta` (with full JSON)
+- `Thinking` → `content_block_start` + `thinking_delta` + `signature_delta`
+
+**Verification:**
+```bash
+# Send a tool-calling request and verify tool_use appears in SSE output
+curl -s -N http://127.0.0.1:3456/v1/messages \
+  -H "content-type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "x-anthropic-model: kimi,kimi-k2.5" \
+  -d '{
+    "model": "kimi-k2.5",
+    "max_tokens": 200,
+    "stream": true,
+    "tools": [{"name": "Read", "description": "Read a file", "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}, "required": ["file_path"]}}],
+    "messages": [{"role": "user", "content": "Read the file /tmp/test.txt"}]
+  }'
+# Should see: event: content_block_start with "type":"tool_use"
+# Should see: event: content_block_delta with "type":"input_json_delta"
+```
+
 ## Performance
 
 **High latency**

@@ -5,6 +5,20 @@ All notable changes to CCR-Rust will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pseudo-SSE tool_use and thinking blocks dropped** — `emit_anthropic_sse_events()` in
+  `streaming.rs` only handled `Text` content blocks, silently skipping `ToolUse` and `Thinking`
+  via `_ => continue`. When `forceNonStreaming: true` is enabled, all non-streaming Anthropic
+  responses pass through this function. Any response containing tool calls was converted to SSE
+  with `stop_reason: tool_use` but no actual tool_use content blocks, causing Claude CLI to fail
+  with `[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use` (exit code 1).
+  Now handles all three `AnthropicContentBlock` variants: `Text` (text_delta), `ToolUse`
+  (content_block_start with metadata + input_json_delta), and `Thinking` (thinking_delta +
+  signature_delta). Added 3 unit tests.
+
 ## [1.1.1] - 2025-02-14
 
 ### Added

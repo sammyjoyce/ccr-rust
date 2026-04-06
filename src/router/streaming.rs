@@ -404,33 +404,92 @@ fn emit_anthropic_sse_events(resp: &AnthropicResponse) -> Vec<String> {
     });
     events.push(format!("event: message_start\ndata: {}\n\n", start_msg));
 
-    // Emit content blocks.
+    // Emit content blocks (text, tool_use, and thinking).
     for (idx, block) in resp.content.iter().enumerate() {
-        let (block_type, text) = match block {
-            AnthropicContentBlock::Text { text } => ("text", text.as_str()),
-            _ => continue,
-        };
+        match block {
+            AnthropicContentBlock::Text { text } => {
+                // content_block_start
+                let block_start = serde_json::json!({
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": {"type": "text", "text": ""}
+                });
+                events.push(format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    block_start
+                ));
 
-        // content_block_start
-        let block_start = serde_json::json!({
-            "type": "content_block_start",
-            "index": idx,
-            "content_block": {"type": block_type, "text": ""}
-        });
-        events.push(format!(
-            "event: content_block_start\ndata: {}\n\n",
-            block_start
-        ));
+                // content_block_delta
+                let delta = serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": idx,
+                    "delta": {"type": "text_delta", "text": text}
+                });
+                events.push(format!("event: content_block_delta\ndata: {}\n\n", delta));
+            }
+            AnthropicContentBlock::ToolUse { id, name, input } => {
+                // content_block_start (with tool metadata, empty input)
+                let block_start = serde_json::json!({
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": id,
+                        "name": name,
+                        "input": {}
+                    }
+                });
+                events.push(format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    block_start
+                ));
 
-        // content_block_delta
-        let delta = serde_json::json!({
-            "type": "content_block_delta",
-            "index": idx,
-            "delta": {"type": "text_delta", "text": text}
-        });
-        events.push(format!("event: content_block_delta\ndata: {}\n\n", delta));
+                // content_block_delta (full input as single input_json_delta)
+                let input_json = serde_json::to_string(input).unwrap_or_default();
+                let delta = serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": idx,
+                    "delta": {"type": "input_json_delta", "partial_json": input_json}
+                });
+                events.push(format!("event: content_block_delta\ndata: {}\n\n", delta));
+            }
+            AnthropicContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
+                // content_block_start
+                let block_start = serde_json::json!({
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": {"type": "thinking", "thinking": ""}
+                });
+                events.push(format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    block_start
+                ));
 
-        // content_block_stop
+                // content_block_delta
+                let delta = serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": idx,
+                    "delta": {"type": "thinking_delta", "thinking": thinking}
+                });
+                events.push(format!("event: content_block_delta\ndata: {}\n\n", delta));
+
+                // signature_delta
+                let sig_delta = serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": idx,
+                    "delta": {"type": "signature_delta", "signature": signature}
+                });
+                events.push(format!(
+                    "event: content_block_delta\ndata: {}\n\n",
+                    sig_delta
+                ));
+            }
+        }
+
+        // content_block_stop (common to all block types)
         let stop = serde_json::json!({
             "type": "content_block_stop",
             "index": idx
@@ -499,5 +558,150 @@ pub(super) async fn wrap_json_response_as_sse(response: Response) -> Response {
     } else {
         // Can't parse as Anthropic — return original response unchanged
         Response::from_parts(parts, Body::from(bytes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_emit_anthropic_sse_events_tool_use() {
+        let resp = AnthropicResponse {
+            id: "msg_test".to_string(),
+            response_type: "message".to_string(),
+            role: "assistant".to_string(),
+            content: vec![
+                AnthropicContentBlock::Text {
+                    text: " ".to_string(),
+                },
+                AnthropicContentBlock::ToolUse {
+                    id: "toolu_123".to_string(),
+                    name: "Read".to_string(),
+                    input: serde_json::json!({"file_path": "/tmp/test.py"}),
+                },
+            ],
+            model: "kimi-k2.5".to_string(),
+            stop_reason: Some("tool_use".to_string()),
+            usage: AnthropicUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+            },
+        };
+
+        let events = emit_anthropic_sse_events(&resp);
+        let joined = events.join("");
+
+        // Must contain message_start
+        assert!(joined.contains("message_start"), "missing message_start");
+        // Must contain the text block
+        assert!(joined.contains("text_delta"), "missing text_delta");
+        // Must contain tool_use content_block_start
+        assert!(
+            joined.contains("\"type\":\"tool_use\""),
+            "missing tool_use block"
+        );
+        assert!(joined.contains("\"name\":\"Read\""), "missing tool name");
+        assert!(joined.contains("\"id\":\"toolu_123\""), "missing tool id");
+        // Must contain tool input as input_json_delta
+        assert!(
+            joined.contains("input_json_delta"),
+            "missing input_json_delta"
+        );
+        assert!(joined.contains("file_path"), "missing tool input content");
+        // Must contain stop_reason
+        assert!(
+            joined.contains("\"stop_reason\":\"tool_use\""),
+            "missing stop_reason"
+        );
+        // Must have message_stop
+        assert!(joined.contains("message_stop"), "missing message_stop");
+    }
+
+    #[test]
+    fn test_emit_anthropic_sse_events_thinking() {
+        let resp = AnthropicResponse {
+            id: "msg_think".to_string(),
+            response_type: "message".to_string(),
+            role: "assistant".to_string(),
+            content: vec![
+                AnthropicContentBlock::Thinking {
+                    thinking: "Let me analyze this...".to_string(),
+                    signature: "sig123".to_string(),
+                },
+                AnthropicContentBlock::Text {
+                    text: "Here is my answer.".to_string(),
+                },
+            ],
+            model: "kimi-k2.5".to_string(),
+            stop_reason: Some("end_turn".to_string()),
+            usage: AnthropicUsage {
+                input_tokens: 50,
+                output_tokens: 30,
+            },
+        };
+
+        let events = emit_anthropic_sse_events(&resp);
+        let joined = events.join("");
+
+        assert!(joined.contains("thinking_delta"), "missing thinking_delta");
+        assert!(
+            joined.contains("Let me analyze this..."),
+            "missing thinking content"
+        );
+        assert!(
+            joined.contains("signature_delta"),
+            "missing signature_delta"
+        );
+        assert!(joined.contains("sig123"), "missing signature content");
+        assert!(joined.contains("text_delta"), "missing text_delta");
+    }
+
+    #[test]
+    fn test_emit_anthropic_sse_events_multiple_tools() {
+        let resp = AnthropicResponse {
+            id: "msg_multi".to_string(),
+            response_type: "message".to_string(),
+            role: "assistant".to_string(),
+            content: vec![
+                AnthropicContentBlock::Text {
+                    text: "I'll read both files.".to_string(),
+                },
+                AnthropicContentBlock::ToolUse {
+                    id: "toolu_1".to_string(),
+                    name: "Read".to_string(),
+                    input: serde_json::json!({"file_path": "/a.py"}),
+                },
+                AnthropicContentBlock::ToolUse {
+                    id: "toolu_2".to_string(),
+                    name: "Read".to_string(),
+                    input: serde_json::json!({"file_path": "/b.py"}),
+                },
+            ],
+            model: "kimi-k2.5".to_string(),
+            stop_reason: Some("tool_use".to_string()),
+            usage: AnthropicUsage {
+                input_tokens: 100,
+                output_tokens: 40,
+            },
+        };
+
+        let events = emit_anthropic_sse_events(&resp);
+        let joined = events.join("");
+
+        // Both tool IDs must be present
+        assert!(joined.contains("toolu_1"), "missing first tool id");
+        assert!(joined.contains("toolu_2"), "missing second tool id");
+        // Both file paths must be in the input
+        assert!(joined.contains("/a.py"), "missing first tool input");
+        assert!(joined.contains("/b.py"), "missing second tool input");
+        // Three content_block_stop SSE events (text + 2 tools)
+        // Each produces "event: content_block_stop\ndata: {\"type\":\"content_block_stop\"...}"
+        // so the event line appears 3 times
+        assert_eq!(
+            joined.matches("event: content_block_stop").count(),
+            3,
+            "expected 3 content_block_stop events"
+        );
     }
 }
