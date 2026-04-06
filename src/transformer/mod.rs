@@ -11,6 +11,8 @@ use crate::transform::glm::GlmTransformer;
 use crate::transform::kimi::KimiTransformer;
 use crate::transform::minimax::MinimaxTransformer;
 use crate::transform::openai_to_anthropic::OpenAiToAnthropicTransformer;
+use crate::transform::output_compress::OutputCompressTransformer;
+use crate::transform::toolcompress::ToolCompressTransformer;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -252,6 +254,8 @@ impl TransformerRegistry {
         registry.register("thinktag", Arc::new(ThinkTagTransformer));
         registry.register("glm", Arc::new(GlmTransformer::default()));
         registry.register("kimi", Arc::new(KimiTransformer));
+        registry.register("toolcompress", Arc::new(ToolCompressTransformer::default()));
+        registry.register("output_compress", Arc::new(OutputCompressTransformer));
 
         registry
     }
@@ -278,6 +282,7 @@ impl TransformerRegistry {
                 // Default to 65536 if not specified
                 Some(Arc::new(MaxTokenTransformer::new(65536)))
             }
+            "toolcompress" => Some(Arc::new(ToolCompressTransformer::from_options(options))),
             _ => self.get(name),
         }
     }
