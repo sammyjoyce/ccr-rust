@@ -28,32 +28,6 @@ pub fn strip_progress_bars(text: &str) -> String {
     PROGRESS_BAR_RE.replace_all(text, "").into_owned()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_strip_ansi() {
-        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
-        assert_eq!(strip_ansi("no escapes"), "no escapes");
-    }
-
-    #[test]
-    fn test_collapse_blank_lines() {
-        assert_eq!(collapse_blank_lines("a\n\n\n\nb"), "a\n\nb");
-        assert_eq!(collapse_blank_lines("a\n\nb"), "a\n\nb");
-    }
-
-    #[test]
-    fn test_strip_progress_bars() {
-        assert_eq!(
-            strip_progress_bars("downloading\r50%\r100%\ndone"),
-            "\ndone"
-        );
-        assert_eq!(strip_progress_bars("normal line\n"), "normal line\n");
-    }
-}
-
 /// Apply all pattern-based compressions to text.
 /// Returns the cleaned/compressed text.
 pub fn compress(text: &str) -> String {
@@ -81,4 +55,30 @@ pub fn compress(text: &str) -> String {
 
     // No pattern matched — return cleaned text
     cleaned
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_ansi() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(strip_ansi("no escapes"), "no escapes");
+    }
+
+    #[test]
+    fn test_collapse_blank_lines() {
+        assert_eq!(collapse_blank_lines("a\n\n\n\nb"), "a\n\nb");
+        assert_eq!(collapse_blank_lines("a\n\nb"), "a\n\nb");
+    }
+
+    #[test]
+    fn test_strip_progress_bars() {
+        assert_eq!(
+            strip_progress_bars("downloading\r50%\r100%\ndone"),
+            "\ndone"
+        );
+        assert_eq!(strip_progress_bars("normal line\n"), "normal line\n");
+    }
 }

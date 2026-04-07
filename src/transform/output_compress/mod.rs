@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn default_and_new_are_equivalent() {
         let a = OutputCompressTransformer::new();
-        let b = OutputCompressTransformer::default();
+        let b = OutputCompressTransformer;
         assert_eq!(a.name(), b.name());
     }
 }

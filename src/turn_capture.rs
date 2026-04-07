@@ -194,7 +194,7 @@ impl TurnCaptureState {
 
     fn record_item(&mut self, item: &Value, lifecycle: Lifecycle, thread_id: Option<&str>) {
         let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
-        let is_root = thread_id.map_or(true, |tid| tid == self.root_thread_id);
+        let is_root = thread_id.is_none_or(|tid| tid == self.root_thread_id);
 
         match item_type {
             "collabAgentToolCall" => {

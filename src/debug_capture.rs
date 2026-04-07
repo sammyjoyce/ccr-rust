@@ -287,7 +287,7 @@ impl DebugCapture {
 
         let entries: Vec<_> = fs::read_dir(&self.output_path)?
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
             .collect();
 
         if entries.len() <= self.config.max_files {
@@ -336,11 +336,11 @@ impl DebugCapture {
             .filter_map(|e| e.ok())
             .filter(|e| {
                 let path = e.path();
-                let is_json = path.extension().map_or(false, |ext| ext == "json");
-                let matches_provider = provider.map_or(true, |p| {
+                let is_json = path.extension().is_some_and(|ext| ext == "json");
+                let matches_provider = provider.is_none_or(|p| {
                     path.file_stem()
                         .and_then(|s| s.to_str())
-                        .map_or(false, |name| name.starts_with(&format!("{}_", p)))
+                        .is_some_and(|name| name.starts_with(&format!("{}_", p)))
                 });
                 is_json && matches_provider
             })
@@ -384,7 +384,7 @@ impl DebugCapture {
 
         for entry in fs::read_dir(&self.output_path)?.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 stats.total_captures += 1;
 
                 if let Ok(content) = fs::read_to_string(&path) {
@@ -553,7 +553,7 @@ impl CaptureBuilder {
             response_truncated: truncated,
             latency_ms,
             is_streaming: self.is_streaming,
-            success: status >= 200 && status < 300,
+            success: (200..300).contains(&status),
             error,
             metadata: None,
         }

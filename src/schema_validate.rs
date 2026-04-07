@@ -24,11 +24,11 @@ impl SchemaValidator {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .with_context(|| format!("reading schema file: {}", path.as_ref().display()))?;
-        Self::from_str(&content)
+        Self::from_json(&content)
     }
 
     /// Create a validator from an inline JSON string.
-    pub fn from_str(json: &str) -> Result<Self> {
+    pub fn from_json(json: &str) -> Result<Self> {
         let schema: Value =
             serde_json::from_str(json).context("parsing schema JSON")?;
         let validator = Validator::new(&schema)
@@ -97,8 +97,8 @@ impl SchemaEnforcementTransformer {
     }
 
     /// Create from an inline JSON string with a descriptive name.
-    pub fn from_str(json: &str, name: impl Into<String>) -> Result<Self> {
-        let validator = SchemaValidator::from_str(json)?;
+    pub fn from_json(json: &str, name: impl Into<String>) -> Result<Self> {
+        let validator = SchemaValidator::from_json(json)?;
         Ok(Self {
             validator,
             schema_name: name.into(),
@@ -161,13 +161,13 @@ mod tests {
 
     #[test]
     fn valid_response_passes() {
-        let v = SchemaValidator::from_str(SIMPLE_SCHEMA).unwrap();
+        let v = SchemaValidator::from_json(SIMPLE_SCHEMA).unwrap();
         assert!(v.validate_response(r#"{"verdict":"approve"}"#).is_ok());
     }
 
     #[test]
     fn invalid_enum_value_fails() {
-        let v = SchemaValidator::from_str(SIMPLE_SCHEMA).unwrap();
+        let v = SchemaValidator::from_json(SIMPLE_SCHEMA).unwrap();
         let result = v.validate_response(r#"{"verdict":"maybe"}"#);
         assert!(result.is_err());
         let errors = result.unwrap_err();
@@ -176,14 +176,14 @@ mod tests {
 
     #[test]
     fn missing_required_field_fails() {
-        let v = SchemaValidator::from_str(SIMPLE_SCHEMA).unwrap();
+        let v = SchemaValidator::from_json(SIMPLE_SCHEMA).unwrap();
         let result = v.validate_response(r#"{}"#);
         assert!(result.is_err());
     }
 
     #[test]
     fn non_json_response_fails() {
-        let v = SchemaValidator::from_str(SIMPLE_SCHEMA).unwrap();
+        let v = SchemaValidator::from_json(SIMPLE_SCHEMA).unwrap();
         let result = v.validate_response("not json at all");
         assert!(result.is_err());
         assert!(result.unwrap_err()[0].contains("not valid JSON"));
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn enforcement_transformer_passes_through_on_valid() {
-        let t = SchemaEnforcementTransformer::from_str(SIMPLE_SCHEMA, "test").unwrap();
+        let t = SchemaEnforcementTransformer::from_json(SIMPLE_SCHEMA, "test").unwrap();
         let response = serde_json::json!({
             "content": [{"type": "text", "text": "{\"verdict\":\"approve\"}"}]
         });
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn enforcement_transformer_passes_through_on_invalid() {
-        let t = SchemaEnforcementTransformer::from_str(SIMPLE_SCHEMA, "test").unwrap();
+        let t = SchemaEnforcementTransformer::from_json(SIMPLE_SCHEMA, "test").unwrap();
         let response = serde_json::json!({
             "content": [{"type": "text", "text": "not json"}]
         });

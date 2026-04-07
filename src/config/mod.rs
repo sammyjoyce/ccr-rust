@@ -470,7 +470,7 @@ mod tests {
                     "name": "openrouter",
                     "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
                     "api_key": "sk-xxx",
-                    "models": ["google/gemini-2.5-pro-preview"],
+                    "models": ["google/gemini-3.1-pro-preview"],
                     "transformer": {"use": ["openrouter"]}
                 },
                 {

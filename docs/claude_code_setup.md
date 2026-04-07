@@ -28,6 +28,7 @@ claude --version
 ```
 
 Expected output:
+
 ```
 0.2.x (or newer)
 ```
@@ -58,6 +59,7 @@ claude
 ```
 
 Follow the interactive prompts to:
+
 1. Accept the terms of service
 2. Configure your API key (can be skipped if using CCR-Rust proxy)
 3. Set default preferences
@@ -79,7 +81,11 @@ Edit your CCR-Rust configuration file (default: `~/.claude-code-router/config.js
       "name": "anthropic",
       "api_base_url": "https://api.anthropic.com/v1/messages",
       "api_key": "${ANTHROPIC_API_KEY}",
-      "models": ["claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-5-haiku-20241022"]
+      "models": [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-opus-20240229",
+        "claude-3-5-haiku-20241022"
+      ]
     },
     {
       "name": "zai",
@@ -99,7 +105,7 @@ Edit your CCR-Rust configuration file (default: `~/.claude-code-router/config.js
       "name": "openrouter",
       "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
       "api_key": "${OPENROUTER_API_KEY}",
-      "models": ["minimax/minimax-m2.5", "google/gemini-2.5-pro-preview"],
+      "models": ["minimax/minimax-m2.5", "google/gemini-3.1-pro-preview"],
       "transformer": { "use": ["openrouter", "openai_to_anthropic"] }
     }
   ],
@@ -161,13 +167,13 @@ Edit your CCR-Rust configuration file (default: `~/.claude-code-router/config.js
 
 The `Frontend.claude_code.modelMappings` section maps Claude Code model names to CCR-Rust provider routes:
 
-| Mapping Key | CCR-Rust Route | Description |
-|-------------|----------------|-------------|
+| Mapping Key                  | CCR-Rust Route                         | Description               |
+| ---------------------------- | -------------------------------------- | ------------------------- |
 | `claude-3-5-sonnet-20241022` | `anthropic,claude-3-5-sonnet-20241022` | Default Claude 3.5 Sonnet |
-| `claude-3-opus-20240229` | `anthropic,claude-3-opus-20240229` | Claude 3 Opus (powerful) |
-| `claude-3-5-haiku-20241022` | `anthropic,claude-3-5-haiku-20241022` | Fast, cost-effective |
-| `glm-5` | `zai,glm-5` | Z.AI GLM-5 via CCR-Rust |
-| `deepseek-reasoner` | `deepseek,deepseek-reasoner` | DeepSeek reasoning model |
+| `claude-3-opus-20240229`     | `anthropic,claude-3-opus-20240229`     | Claude 3 Opus (powerful)  |
+| `claude-3-5-haiku-20241022`  | `anthropic,claude-3-5-haiku-20241022`  | Fast, cost-effective      |
+| `glm-5`                      | `zai,glm-5`                            | Z.AI GLM-5 via CCR-Rust   |
+| `deepseek-reasoner`          | `deepseek,deepseek-reasoner`           | DeepSeek reasoning model  |
 
 **Format:** `"provider,model"` where `provider` matches a provider name and `model` is in that provider's models list.
 
@@ -189,8 +195,9 @@ curl http://127.0.0.1:3456/health
 ```
 
 Expected response:
+
 ```json
-{"status":"healthy","version":"1.0.0"}
+{ "status": "healthy", "version": "1.0.0" }
 ```
 
 ### 2.4 Configure Claude Code Environment
@@ -242,6 +249,7 @@ When routing to Anthropic models, CCR-Rust supports the `cache_control` extensio
 ### 3.2 Claude Code Cache Behavior
 
 Claude Code automatically uses cache control for:
+
 - **System prompts**: Cached automatically on first request
 - **File contents**: Cached when files are read via tools
 - **Conversation history**: Cached for multi-turn conversations
@@ -256,6 +264,7 @@ curl http://127.0.0.1:3456/v1/usage
 ```
 
 Expected response:
+
 ```json
 {
   "tier-0": {
@@ -302,11 +311,11 @@ Configure the `think` route in CCR-Rust for reasoning models:
 
 Claude Code displays thinking blocks differently based on the model:
 
-| Model | Thinking Display | Configuration |
-|-------|-----------------|---------------|
-| Claude 3 Opus | Native thinking | Automatic |
-| DeepSeek Reasoner | Tagged blocks | `<|im_start|>...ground` |
-| GLM-5 | Via transformer | Hidden by default |
+| Model             | Thinking Display | Configuration     |
+| ----------------- | ---------------- | ----------------- | -------- | ----------- |
+| Claude 3 Opus     | Native thinking  | Automatic         |
+| DeepSeek Reasoner | Tagged blocks    | `<                | im_start | >...ground` |
+| GLM-5             | Via transformer  | Hidden by default |
 
 ### 4.3 Controlling Thinking Output
 
@@ -329,6 +338,7 @@ Use CCR-Rust transformers to customize thinking block handling:
 ```
 
 **Transformer options:**
+
 - `thinktag`: Wraps thinking content in `<|im_start|>` tags
 - `thinkstrip`: Removes thinking content entirely
 
@@ -371,12 +381,12 @@ All reasoning-capable providers now return `reasoning_content` as a structured f
 
 ### Provider Matrix
 
-| Provider | Input Format | Output Format |
-|----------|--------------|---------------|
-| DeepSeek | `reasoning_content` (native) | `reasoning_content` (preserved) |
-| Minimax M2.5 | `reasoning_details` | `reasoning_content` (mapped) |
-| GLM-5 (Z.AI) | `<|im_start|>` tags | `reasoning_content` (extracted) |
-| Kimi K2 | `◁think▷` tokens | `reasoning_content` (extracted) |
+| Provider     | Input Format                 | Output Format                   |
+| ------------ | ---------------------------- | ------------------------------- | ------- | ------------------------------- |
+| DeepSeek     | `reasoning_content` (native) | `reasoning_content` (preserved) |
+| Minimax M2.5 | `reasoning_details`          | `reasoning_content` (mapped)    |
+| GLM-5 (Z.AI) | `<                           | im_start                        | >` tags | `reasoning_content` (extracted) |
+| Kimi K2      | `◁think▷` tokens             | `reasoning_content` (extracted) |
 
 ### Multi-Turn Tool Use
 
@@ -449,17 +459,21 @@ Provider setup used by AlphaHENG (`contrib/ccr-rust/config.alphaheng.json`):
 ### 6.1 "Connection Refused" Error
 
 **Symptom:**
+
 ```
 Error: connect ECONNREFUSED 127.0.0.1:3456
 ```
 
 **Solutions:**
+
 1. Ensure CCR-Rust is running:
+
    ```bash
    ccr-rust status
    ```
 
 2. Check the correct port is configured:
+
    ```bash
    lsof -i :3456
    ```
@@ -472,17 +486,21 @@ Error: connect ECONNREFUSED 127.0.0.1:3456
 ### 6.2 "Invalid API Key" Error
 
 **Symptom:**
+
 ```
 Error: 401 Unauthorized - Invalid API key
 ```
 
 **Solutions:**
+
 1. Verify your API key is set correctly:
+
    ```bash
    echo $ANTHROPIC_API_KEY
    ```
 
 2. Check CCR-Rust config has the correct provider API key:
+
    ```bash
    ccr-rust validate
    ```
@@ -495,12 +513,15 @@ Error: 401 Unauthorized - Invalid API key
 ### 6.3 "Model Not Found" Error
 
 **Symptom:**
+
 ```
 Error: 404 - Model 'xxx' not found
 ```
 
 **Solutions:**
+
 1. Check model mapping in CCR-Rust config:
+
    ```json
    "Frontend": {
      "claude_code": {
@@ -512,6 +533,7 @@ Error: 404 - Model 'xxx' not found
    ```
 
 2. Verify the provider supports the requested model:
+
    ```bash
    curl http://127.0.0.1:3456/v1/models
    ```
@@ -526,12 +548,15 @@ Error: 404 - Model 'xxx' not found
 **Symptom:** Slow responses or timeout errors.
 
 **Solutions:**
+
 1. Check CCR-Rust latency metrics:
+
    ```bash
    curl http://127.0.0.1:3456/v1/latencies
    ```
 
 2. Increase timeout in CCR-Rust config:
+
    ```json
    "API_TIMEOUT_MS": 600000
    ```
@@ -546,12 +571,15 @@ Error: 404 - Model 'xxx' not found
 **Symptom:** No cache hit rate improvement, high token costs.
 
 **Solutions:**
+
 1. Verify cache metrics are being recorded:
+
    ```bash
    curl http://127.0.0.1:3456/v1/usage
    ```
 
 2. Ensure using compatible model (Claude 3.5 Sonnet/Opus):
+
    ```bash
    claude --model claude-3-5-sonnet-20241022
    ```
@@ -566,7 +594,9 @@ Error: 404 - Model 'xxx' not found
 **Symptom:** Reasoning models not showing thinking content.
 
 **Solutions:**
+
 1. Verify think transformer is configured:
+
    ```json
    "transformer": {
      "use": ["deepseek", "thinktag", "openai_to_anthropic"]
@@ -574,6 +604,7 @@ Error: 404 - Model 'xxx' not found
    ```
 
 2. Check Claude Code environment variable:
+
    ```bash
    echo $CLAUDE_SHOW_THINKING
    ```
@@ -588,12 +619,15 @@ Error: 404 - Model 'xxx' not found
 **Symptom:** Claude Code cannot use tools (file operations, bash commands).
 
 **Solutions:**
+
 1. Ensure using native Anthropic route for full tool support:
+
    ```bash
    claude --model claude-3-5-sonnet-20241022
    ```
 
 2. Check transformer supports tool translation:
+
    ```json
    "transformer": {
      "use": ["openai_to_anthropic"]
@@ -610,16 +644,19 @@ Error: 404 - Model 'xxx' not found
 Enable debug output for troubleshooting:
 
 **CCR-Rust debug logs:**
+
 ```bash
 RUST_LOG=ccr_rust=debug ccr-rust start
 ```
 
 **Claude Code debug output:**
+
 ```bash
 DEBUG=* claude
 ```
 
 **Verbose Claude Code output:**
+
 ```bash
 claude --verbose
 ```
@@ -667,6 +704,7 @@ CCR-Rust supports preset routes that Claude Code can use:
 ```
 
 Access via direct URL:
+
 ```bash
 # Use preset endpoint directly
 curl http://127.0.0.1:3456/preset/coding/v1/messages \
