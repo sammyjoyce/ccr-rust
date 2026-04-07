@@ -7,8 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::OnceLock;
 use std::thread;
 use tracing::{info, warn};
@@ -17,30 +17,24 @@ use crate::config::{PersistenceConfig, PersistenceMode};
 use crate::ratelimit::restore_rate_limit_backoff_counter;
 use crate::routing::EwmaTracker;
 
+use super::sync_ewma_gauge;
 use super::{
-    PreRequestAuditEntry, TokenDriftEntry,
-    AUDIT_LOG, AUDIT_LOG_CAPACITY,
-    CACHE_CREATION_TOKENS_TOTAL, CACHE_READ_TOKENS_TOTAL,
-    FAILURES_TOTAL, FRONTEND_REQUESTS_TOTAL,
-    INPUT_TOKENS_TOTAL, OUTPUT_TOKENS_TOTAL,
-    METRIC_CACHE_CREATION_TOKENS_TOTAL, METRIC_CACHE_READ_TOKENS_TOTAL,
+    PreRequestAuditEntry, TokenDriftEntry, AUDIT_LOG, AUDIT_LOG_CAPACITY,
+    CACHE_CREATION_TOKENS_TOTAL, CACHE_READ_TOKENS_TOTAL, FAILURES_TOTAL, FRONTEND_REQUESTS_TOTAL,
+    INPUT_TOKENS_TOTAL, METRIC_CACHE_CREATION_TOKENS_TOTAL, METRIC_CACHE_READ_TOKENS_TOTAL,
     METRIC_FAILURES_TOTAL, METRIC_FRONTEND_REQUESTS_TOTAL,
     METRIC_FRONTEND_REQUEST_DURATION_SECONDS, METRIC_INPUT_TOKENS_TOTAL,
-    METRIC_OUTPUT_TOKENS_TOTAL, METRIC_PEAK_ACTIVE_STREAMS,
-    METRIC_PRE_REQUEST_TOKENS, METRIC_PRE_REQUEST_TOKENS_TOTAL,
-    METRIC_RATE_LIMIT_BACKOFFS_TOTAL, METRIC_RATE_LIMIT_HITS_TOTAL,
-    METRIC_REJECTED_STREAMS_TOTAL, METRIC_REQUESTS_TOTAL,
+    METRIC_OUTPUT_TOKENS_TOTAL, METRIC_PEAK_ACTIVE_STREAMS, METRIC_PRE_REQUEST_TOKENS,
+    METRIC_PRE_REQUEST_TOKENS_TOTAL, METRIC_RATE_LIMIT_BACKOFFS_TOTAL,
+    METRIC_RATE_LIMIT_HITS_TOTAL, METRIC_REJECTED_STREAMS_TOTAL, METRIC_REQUESTS_TOTAL,
     METRIC_REQUEST_DURATION_SECONDS, METRIC_STREAM_BACKPRESSURE_TOTAL,
-    METRIC_TIER_EWMA_LATENCY_SECONDS, METRIC_TOKEN_DRIFT_ABSOLUTE,
-    METRIC_TOKEN_DRIFT_ALERTS_TOTAL, METRIC_TOKEN_DRIFT_PCT,
-    PEAK_ACTIVE_STREAMS, PRE_REQUEST_TOKENS, PRE_REQUEST_TOKENS_BUCKETS,
-    RATE_LIMIT_HITS,
-    REJECTED_STREAMS, REQUESTS_TOTAL, REQUEST_DURATION_BUCKETS,
-    STREAM_BACKPRESSURE, TIER_EWMA_LATENCY,
-    TOKEN_DRIFT_ABS, TOKEN_DRIFT_ALERTS, TOKEN_DRIFT_PCT, TOKEN_DRIFT_STATE,
-    TOTAL_FAILURES, TOTAL_INPUT_TOKENS, TOTAL_OUTPUT_TOKENS, TOTAL_REQUESTS,
+    METRIC_TIER_EWMA_LATENCY_SECONDS, METRIC_TOKEN_DRIFT_ABSOLUTE, METRIC_TOKEN_DRIFT_ALERTS_TOTAL,
+    METRIC_TOKEN_DRIFT_PCT, OUTPUT_TOKENS_TOTAL, PEAK_ACTIVE_STREAMS, PRE_REQUEST_TOKENS,
+    PRE_REQUEST_TOKENS_BUCKETS, RATE_LIMIT_HITS, REJECTED_STREAMS, REQUESTS_TOTAL,
+    REQUEST_DURATION_BUCKETS, STREAM_BACKPRESSURE, TIER_EWMA_LATENCY, TOKEN_DRIFT_ABS,
+    TOKEN_DRIFT_ALERTS, TOKEN_DRIFT_PCT, TOKEN_DRIFT_STATE, TOTAL_FAILURES, TOTAL_INPUT_TOKENS,
+    TOTAL_OUTPUT_TOKENS, TOTAL_REQUESTS,
 };
-use super::sync_ewma_gauge;
 
 static REDIS_RUNTIME: OnceLock<RedisRuntime> = OnceLock::new();
 
@@ -762,7 +756,7 @@ fn make_metric_with_labels(encoded_labels: &str) -> prometheus::proto::Metric {
         let mut pair = prometheus::proto::LabelPair::new();
         pair.set_name(name);
         pair.set_value(value);
-        metric.mut_label().push(pair);
+        metric.label.push(pair);
     }
     metric
 }
@@ -770,7 +764,7 @@ fn make_metric_with_labels(encoded_labels: &str) -> prometheus::proto::Metric {
 fn encode_metric_labels(metric: &prometheus::proto::Metric) -> String {
     let mut labels = BTreeMap::new();
     for label in metric.get_label() {
-        labels.insert(label.get_name().to_string(), label.get_value().to_string());
+        labels.insert(label.name().to_string(), label.value().to_string());
     }
     serde_json::to_string(&labels).unwrap_or_else(|_| "{}".to_string())
 }
@@ -794,7 +788,7 @@ pub(super) fn merge_histogram_offsets(metric_families: &mut Vec<prometheus::prot
 
         let family_idx = metric_families
             .iter()
-            .position(|family| family.get_name() == metric_name);
+            .position(|family| family.name() == metric_name);
 
         if let Some(idx) = family_idx {
             let family = &mut metric_families[idx];
@@ -805,23 +799,23 @@ pub(super) fn merge_histogram_offsets(metric_families: &mut Vec<prometheus::prot
 
             for (labels, offset) in offsets {
                 if let Some(&metric_idx) = existing_indices.get(labels) {
-                    let metric = &mut family.mut_metric()[metric_idx];
-                    let hist = metric.mut_histogram();
+                    let metric = &mut family.metric[metric_idx];
+                    let hist = metric.histogram.mut_or_insert_default();
                     hist.set_sample_sum(hist.get_sample_sum() + offset.sample_sum);
                     hist.set_sample_count(hist.get_sample_count() + offset.sample_count);
 
                     let mut current_buckets: HashMap<String, u64> = HashMap::new();
                     for bucket in hist.get_bucket() {
                         current_buckets.insert(
-                            format_bound(bucket.get_upper_bound()),
-                            bucket.get_cumulative_count(),
+                            format_bound(bucket.upper_bound()),
+                            bucket.cumulative_count(),
                         );
                     }
                     for (bound, count) in &offset.cumulative_buckets {
                         *current_buckets.entry(bound.clone()).or_insert(0) += count;
                     }
 
-                    hist.clear_bucket();
+                    hist.bucket.clear();
                     if let Some(bounds) = histogram_bounds(metric_name) {
                         for bound in bounds {
                             let key = format_bound(*bound);
@@ -830,7 +824,7 @@ pub(super) fn merge_histogram_offsets(metric_families: &mut Vec<prometheus::prot
                             bucket.set_cumulative_count(
                                 current_buckets.get(&key).copied().unwrap_or(0),
                             );
-                            hist.mut_bucket().push(bucket);
+                            hist.bucket.push(bucket);
                         }
                     }
                 } else {
@@ -846,11 +840,11 @@ pub(super) fn merge_histogram_offsets(metric_families: &mut Vec<prometheus::prot
                             bucket.set_cumulative_count(
                                 offset.cumulative_buckets.get(&key).copied().unwrap_or(0),
                             );
-                            hist.mut_bucket().push(bucket);
+                            hist.bucket.push(bucket);
                         }
                     }
                     metric.set_histogram(hist);
-                    family.mut_metric().push(metric);
+                    family.metric.push(metric);
                 }
             }
         } else {
@@ -872,11 +866,11 @@ pub(super) fn merge_histogram_offsets(metric_families: &mut Vec<prometheus::prot
                         bucket.set_cumulative_count(
                             offset.cumulative_buckets.get(&key).copied().unwrap_or(0),
                         );
-                        hist.mut_bucket().push(bucket);
+                        hist.bucket.push(bucket);
                     }
                 }
                 metric.set_histogram(hist);
-                family.mut_metric().push(metric);
+                family.metric.push(metric);
             }
             metric_families.push(family);
         }

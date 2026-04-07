@@ -1,6 +1,6 @@
 # CCR-Rust Agent Instructions
 
-> `CLAUDE.md` is a symlink to this file. Both Claude Code and Copilot read it automatically.
+> `CLAUDE.md` is a symlink to this file. Both Claude Code and Codex read it automatically.
 
 ## Set Up from Scratch
 

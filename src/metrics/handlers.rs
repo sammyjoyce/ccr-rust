@@ -18,9 +18,9 @@ use super::{
     get_hist_offset, merge_histogram_offsets, PreRequestAuditEntry, ACTIVE_REQUESTS,
     ACTIVE_STREAMS, AUDIT_LOG, CACHE_CREATION_TOKENS_TOTAL, CACHE_READ_TOKENS_TOTAL,
     FAILURES_TOTAL, FRONTEND_REQUESTS_TOTAL, FRONTEND_REQUEST_LATENCY, INPUT_TOKENS_TOTAL,
-    METRIC_FRONTEND_REQUEST_DURATION_SECONDS, METRIC_REQUEST_DURATION_SECONDS,
-    OUTPUT_TOKENS_TOTAL, REQUESTS_TOTAL, REQUEST_DURATION, TOKEN_DRIFT_STATE, TOTAL_FAILURES,
-    TOTAL_INPUT_TOKENS, TOTAL_OUTPUT_TOKENS, TOTAL_REQUESTS,
+    METRIC_FRONTEND_REQUEST_DURATION_SECONDS, METRIC_REQUEST_DURATION_SECONDS, OUTPUT_TOKENS_TOTAL,
+    REQUESTS_TOTAL, REQUEST_DURATION, TOKEN_DRIFT_STATE, TOTAL_FAILURES, TOTAL_INPUT_TOKENS,
+    TOTAL_OUTPUT_TOKENS, TOTAL_REQUESTS,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -116,8 +116,8 @@ pub async fn usage_handler() -> impl IntoResponse {
     for mf in &req_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    let tier = label.get_value().to_string();
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
                     let entry = tiers.entry(tier.clone()).or_insert_with(|| TierUsage {
                         tier,
                         requests: 0,
@@ -128,7 +128,7 @@ pub async fn usage_handler() -> impl IntoResponse {
                         cache_creation_tokens: 0,
                         avg_duration_seconds: 0.0,
                     });
-                    entry.requests = m.get_counter().get_value() as u64;
+                    entry.requests = m.get_counter().value() as u64;
                 }
             }
         }
@@ -140,8 +140,8 @@ pub async fn usage_handler() -> impl IntoResponse {
         for m in mf.get_metric() {
             let mut tier_name = String::new();
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    tier_name = label.get_value().to_string();
+                if label.name() == "tier" {
+                    tier_name = label.value().to_string();
                 }
             }
             if !tier_name.is_empty() {
@@ -155,7 +155,7 @@ pub async fn usage_handler() -> impl IntoResponse {
                     cache_creation_tokens: 0,
                     avg_duration_seconds: 0.0,
                 });
-                entry.failures += m.get_counter().get_value() as u64;
+                entry.failures += m.get_counter().value() as u64;
             }
         }
     }
@@ -165,10 +165,10 @@ pub async fn usage_handler() -> impl IntoResponse {
     for mf in &input_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    let tier = label.get_value().to_string();
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
                     if let Some(entry) = tiers.get_mut(&tier) {
-                        entry.input_tokens = m.get_counter().get_value() as u64;
+                        entry.input_tokens = m.get_counter().value() as u64;
                     }
                 }
             }
@@ -180,10 +180,10 @@ pub async fn usage_handler() -> impl IntoResponse {
     for mf in &output_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    let tier = label.get_value().to_string();
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
                     if let Some(entry) = tiers.get_mut(&tier) {
-                        entry.output_tokens = m.get_counter().get_value() as u64;
+                        entry.output_tokens = m.get_counter().value() as u64;
                     }
                 }
             }
@@ -196,10 +196,10 @@ pub async fn usage_handler() -> impl IntoResponse {
     for mf in &cache_read_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    let tier = label.get_value().to_string();
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
                     if let Some(entry) = tiers.get_mut(&tier) {
-                        entry.cache_read_tokens = m.get_counter().get_value() as u64;
+                        entry.cache_read_tokens = m.get_counter().value() as u64;
                     }
                 }
             }
@@ -212,10 +212,10 @@ pub async fn usage_handler() -> impl IntoResponse {
     for mf in &cache_create_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    let tier = label.get_value().to_string();
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
                     if let Some(entry) = tiers.get_mut(&tier) {
-                        entry.cache_creation_tokens = m.get_counter().get_value() as u64;
+                        entry.cache_creation_tokens = m.get_counter().value() as u64;
                     }
                 }
             }
@@ -228,8 +228,8 @@ pub async fn usage_handler() -> impl IntoResponse {
     for mf in &dur_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "tier" {
-                    let tier = label.get_value().to_string();
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
                     if let Some(entry) = tiers.get_mut(&tier) {
                         let h = m.get_histogram();
                         let mut sample_sum = h.get_sample_sum();
@@ -288,8 +288,8 @@ pub async fn frontend_metrics_handler() -> impl IntoResponse {
     for mf in &req_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "frontend" {
-                    let frontend = label.get_value().to_string();
+                if label.name() == "frontend" {
+                    let frontend = label.value().to_string();
                     let entry = frontend_metrics.entry(frontend.clone()).or_insert_with(|| {
                         FrontendMetrics {
                             frontend,
@@ -297,7 +297,7 @@ pub async fn frontend_metrics_handler() -> impl IntoResponse {
                             avg_latency_ms: 0.0,
                         }
                     });
-                    entry.requests = m.get_counter().get_value() as u64;
+                    entry.requests = m.get_counter().value() as u64;
                 }
             }
         }
@@ -309,8 +309,8 @@ pub async fn frontend_metrics_handler() -> impl IntoResponse {
     for mf in &lat_metrics {
         for m in mf.get_metric() {
             for label in m.get_label() {
-                if label.get_name() == "frontend" {
-                    let frontend = label.get_value().to_string();
+                if label.name() == "frontend" {
+                    let frontend = label.value().to_string();
                     if let Some(entry) = frontend_metrics.get_mut(&frontend) {
                         let h = m.get_histogram();
                         let mut sample_sum = h.get_sample_sum();
