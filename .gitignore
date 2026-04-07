@@ -24,8 +24,3 @@ Thumbs.db
 # Task specification (internal planning doc)
 tasks/
 config.alphaheng.json
-
-# Local agent guidance
-AGENTS.md
-CLAUDE.md
-GEMINI.md
