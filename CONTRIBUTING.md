@@ -1,273 +1,108 @@
 # Contributing to CCR-Rust
 
-Thanks for your interest in contributing! CCR-Rust is a high-throughput LLM proxy router, and we welcome improvements that make it faster, more reliable, or easier to use.
-
-## Quick Start
+## Getting started
 
 ```bash
-# Clone and build
-git clone https://github.com/RESMP-DEV/ccr-rust.git
-cd ccr-rust
-cargo build
-
-# Run tests
-cargo test
-
-# Run with a config
-cargo run -- --config path/to/config.json
-```
-
-## Development Setup
-
-### Prerequisites
-
-- **Rust 1.75+** (2024 edition features)
-- **Python 3.10+** with `uv` (for stress tests)
-- Optional: `wiremock` knowledge for integration tests
-
-### Building
-
-```bash
-# Development build
-cargo build
-
-# Release build (optimized)
+cd contrib/ccr-rust
 cargo build --release
-
-# Check without building
-cargo check
-
-# Run clippy lints
-cargo clippy
-```
-
-### Testing
-
-```bash
-# Run all tests
 cargo test
-
-# Run specific test module
-cargo test transformer::tests
-cargo test routing::tests
-
-# Run with output
-cargo test -- --nocapture
-
-# Run integration tests only
-cargo test --test test_routing
 ```
 
-### Stress Testing
-
-See `benchmarks/README.md` for the stress test suite:
-
-```bash
-# Full orchestrated test
-./benchmarks/run_stress_test.sh --streams 100 --chunks 20
-
-# Manual testing
-uv run python benchmarks/mock_sse_backend.py --port 9999 &
-cargo run --release -- --config benchmarks/config_mock.json &
-uv run python benchmarks/stress_sse_streams.py --streams 100
-```
-
-## Code Organization
+## Source tree
 
 ```
 src/
-├── main.rs          # CLI and server setup
-├── lib.rs           # Module exports
-├── config.rs        # Config parsing, provider resolution
-├── router/          # Request handling, format translation, failover
-│   ├── mod.rs       # handle_messages, handle_preset_messages, list_models
-│   ├── types.rs     # AnthropicRequest, AppState, TryRequestArgs
-│   ├── dispatch.rs  # try_request, protocol dispatch, header building
-│   ├── google.rs    # Google Code Assist protocol
-│   ├── streaming.rs # SSE streaming response translation
-│   ├── openai_compat.rs   # /v1/chat/completions handler
-│   ├── responses_api.rs   # /v1/responses handler
-│   ├── translate_request.rs   # Anthropic→OpenAI request translation
-│   └── translate_response.rs  # OpenAI→Anthropic response translation
-├── routing.rs       # EWMA tracking, tier reordering
-├── sse.rs           # SSE streaming, usage extraction
-├── metrics/         # Prometheus metrics, token tracking, persistence
-│   ├── mod.rs       # Metric definitions, recording functions
-│   ├── handlers.rs  # HTTP endpoints (/metrics, /usage, /latencies)
-│   └── persistence.rs # Redis persistence for metrics
-└── transformer.rs   # Request/response transformers
+├── main.rs          # CLI entry point, parsing
+├── lib.rs           # Crate root, pub trait exports
+├── cli.rs           # Command handlers (start, stop, status, validate, dashboard, version)
+├── config/          # Config parsing, provider resolution
+│   ├── mod.rs       # Config loading + validation
+│   └── types.rs     # Provider, Router, Persistence structs
+├── frontend/        # HTTP/WebSocket listener + request handlers
+│   ├── mod.rs       # Axum router setup
+│   ├── anthropic.rs # Anthropic API endpoint handlers
+│   ├── openai.rs    # OpenAI API endpoint handlers
+│   └── streaming.rs # SSE + streaming response conversions
+├── router/          # Provider selection + request dispatch
+│   ├── mod.rs       # Thompson Sampling tier selection
+│   ├── types.rs     # Request/response types
+│   └── streaming.rs # Streaming compatibility layer
+├── metrics/         # Prometheus metrics collection
+│   └── mod.rs       # Token counts, latencies, provider stats
+├── mcp/             # MCP server container (aggregation)
+│   └── mod.rs       # MCP stdio interface
+├── persistence/     # Redis client (optional)
+│   └── mod.rs       # Session/cache storage
+├── transformer/     # Request/response transformers
+│   ├── mod.rs       # Trait definition (Transformer, TransformError)
+│   └── builtin.rs   # Built-in transformer impls (KimiTransformer, etc.)
+└── transform/       # Provider-specific transformers
+    ├── registry.rs  # Name -> transformer mapping
+    ├── kimi.rs      # Kimi toolcompress, thinktag
+    ├── gemini.rs    # Gemini token parsing
+    ├── mmfp4.rs     # MMFP4 quantization hints
+    └── ...          # Per-provider adaptations
 ```
 
-### Key Types
+## Key modules
 
-| Type | Purpose |
-|------|---------|
-| `AppState` | Shared state (config, EWMA tracker, transformer registry) |
-| `EwmaTracker` | Per-tier latency tracking |
-| `TransformerChain` | Composable request/response transformations |
-| `StreamVerifyCtx` | Context for token drift verification |
+### `config/`
+Loads and validates `~/.claude-code-router/config.json`. Supports `${ENV_VAR}` expansion. Resolves providers, API keys, and optional Redis persistence.
 
-## Adding Features
+### `frontend/`
+HTTP listeners (Anthropic `/v1/messages`, OpenAI `/v1/chat/completions`, `/v1/responses`). Converts requests to internal format, dispatches to router, returns streaming or JSON responses.
 
-### Adding a New Transformer
+### `router/`
+Implements Thompson Sampling (Bayesian bandit) for automatic tier selection based on success rates. Retries with exponential backoff on failures.
 
-1. Create the transformer struct in `src/transformer.rs`:
+### `transformer/`
+Interface for request/response transformations (e.g., KimiTransformer for token optimization, thinking blocks).
 
-```rust
-#[derive(Debug, Clone)]
-pub struct MyTransformer {
-    // config fields
-}
+### `transform/`
+Provider-specific transformers: toolcompress (Kimi), output_compress (Kimi), semantic token hints (Gemini), etc.
 
-impl Transformer for MyTransformer {
-    fn name(&self) -> &str {
-        "mytransformer"
-    }
+### `metrics/`
+Prometheus collectors: token counts (input/output), latencies (p50/p90/p99), provider response times, circuit-breaker states.
 
-    fn transform_request(&self, request: Value) -> Result<Value> {
-        // modify request
-        Ok(request)
-    }
-
-    fn transform_response(&self, response: Value) -> Result<Value> {
-        // modify response
-        Ok(response)
-    }
-}
-```
-
-2. Register in `TransformerRegistry::new()`:
-
-```rust
-registry.register("mytransformer", Arc::new(MyTransformer::default()));
-```
-
-3. Add tests:
-
-```rust
-#[test]
-fn mytransformer_does_thing() {
-    let transformer = MyTransformer::default();
-    let input = serde_json::json!({...});
-    let output = transformer.transform_request(input).unwrap();
-    assert_eq!(output["field"], expected);
-}
-```
-
-### Adding a New Metric
-
-1. Define the metric in `src/metrics/mod.rs`:
-
-```rust
-lazy_static! {
-    static ref MY_COUNTER: IntCounterVec = register_int_counter_vec!(
-        "ccr_my_metric_total",
-        "Description of what this counts",
-        &["tier"]
-    ).unwrap();
-}
-```
-
-2. Create a helper function:
-
-```rust
-pub fn record_my_metric(tier: &str) {
-    MY_COUNTER.with_label_values(&[tier]).inc();
-}
-```
-
-3. Call from router/sse as needed.
-
-### Adding a New Endpoint
-
-1. Define the handler in the appropriate `src/router/` submodule (e.g., `dispatch.rs` for protocol handlers, or a new file for new features):
-
-```rust
-pub async fn my_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    // implementation
-}
-```
-
-2. Register in `main.rs`:
-
-```rust
-.route("/v1/myendpoint", get(router::my_handler))
-```
-
-## Code Style
-
-### Formatting
+## Testing
 
 ```bash
+# Run tests
+cargo test
+
+# Run a single test
+cargo test test_anthropic_routing -- --nocapture
+
+# Check for warnings
+cargo clippy
+
+# Format code
 cargo fmt
 ```
 
-### Lints
+## Code style
 
-```bash
-cargo clippy -- -D warnings
-```
+- Format: `cargo fmt` (Rust standard)
+- Linting: `cargo clippy` (no warnings)
+- Documentation: `///` comments on public items
+- Error handling: Use `thiserror` for custom error types
 
-### Conventions
+## Adding a new provider
 
-- Use `tracing` for logging, not `println!` or `log`
-- Prefer `anyhow::Result` for error handling
-- Keep functions under ~50 lines when practical
-- Add doc comments for public APIs
-- Use `#[cfg(test)]` for test modules
+1. Add provider entry to `config/types.rs` (Provider struct)
+2. Implement client logic in `router/dispatch.rs` (send request to provider API)
+3. Add transformer in `transform/` if protocol translation needed
+4. Add metrics in `metrics/mod.rs` (per-provider stats)
+5. Update `docs/configuration.md` with API key setup
+6. Test with `cargo test`
 
-### Commit Messages
+## Commit workflow
 
-```
-feat: add think-tag stripping transformer
-fix: handle empty tool_calls array in OpenAI response
-perf: reduce allocations in SSE parsing
-docs: update transformer configuration examples
-test: add integration test for rate limiting
-```
+1. Write a clear commit message (problem → solution)
+2. Ensure `cargo test` and `cargo clippy` pass
+3. Verify new public items have `///` documentation
+4. Push to feature branch, open PR
 
-## Pull Request Process
+## Licensing
 
-1. **Fork** the repo and create a feature branch
-2. **Write tests** for new functionality
-3. **Run the test suite** and fix any failures
-4. **Update documentation** if adding user-facing features
-5. **Open a PR** with a clear description
-
-### PR Checklist
-
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` has no warnings
-- [ ] `cargo fmt` applied
-- [ ] New features have tests
-- [ ] README updated if needed
-
-## Reporting Issues
-
-When reporting bugs, please include:
-
-1. **CCR-Rust version** (`cargo --version`, commit hash)
-2. **Config snippet** (redact API keys)
-3. **Steps to reproduce**
-4. **Expected vs actual behavior**
-5. **Error messages** or logs
-
-For performance issues, include:
-
-- Number of concurrent streams
-- Request sizes (approximate)
-- Memory usage (`/metrics` output)
-- `htop` or similar resource monitoring
-
-## Areas We'd Love Help With
-
-- **Provider quirks**: DeepSeek, OpenRouter, and others have API differences
-- **Edge cases**: Streaming interruptions, malformed JSON, etc.
-- **Performance**: Profiling, reducing allocations, connection pooling
-- **Documentation**: Examples, troubleshooting guides
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+CCR-Rust is AGPL-3.0-or-later. By contributing, you agree that your changes are licensed under AGPL-3.0-or-later.
