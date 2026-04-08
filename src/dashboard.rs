@@ -262,10 +262,7 @@ fn run_loop<B: Backend>(
     host: String,
     port: u16,
     shared_state: SharedDashboardState,
-) -> Result<()>
-where
-    <B as Backend>::Error: std::error::Error + Send + Sync + 'static,
-{
+) -> Result<()> {
     let mut last_tick = Instant::now();
     let mut ui_state = UiState::default();
     let session_info = SessionInfo::collect();
@@ -303,7 +300,7 @@ fn ui(f: &mut ratatui::Frame, host: &str, port: u16, state: &UiState, session_in
             Constraint::Percentage(30),
             Constraint::Min(0),
         ])
-        .split(f.area());
+        .split(f.size());
 
     // Render the header widget with global stats from fetched data
     render_header(f, main_chunks[0], host, port, &state.global_stats);
