@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests for Codex frontend.
 //!
 //! Tests the end-to-end flow for OpenAI Codex CLI clients:
@@ -1133,7 +1134,7 @@ async fn test_codex_response_transformation_with_reasoning_content() {
             "id": "msg_123",
             "type": "message",
             "role": "assistant",
-            "model": "claude-3-5-sonnet",
+            "model": "claude-sonnet-4-6",
             "content": [
                 {
                     "type": "thinking",

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Mock Claude Code client for testing.
 //!
 //! Provides helper functions to generate realistic Anthropic API format requests.
@@ -8,7 +9,7 @@ use serde_json::{json, Value};
 /// Generate a basic Anthropic messages request.
 ///
 /// # Arguments
-/// * `model` - The model identifier (e.g., "claude-3-5-sonnet-20241022")
+/// * `model` - The model identifier (e.g., "claude-sonnet-4-6")
 /// * `messages` - Array of message objects with role and content
 ///
 /// # Returns
@@ -17,7 +18,7 @@ use serde_json::{json, Value};
 /// # Example
 /// ```rust
 /// let request = generate_messages_request(
-///     "claude-3-5-sonnet-20241022",
+///     "claude-sonnet-4-6",
 ///     json!([{"role": "user", "content": "Hello!"}])
 /// );
 /// ```
@@ -63,7 +64,7 @@ pub fn generate_streaming_request(model: &str, messages: Value) -> Value {
 /// ```
 pub fn generate_thinking_request() -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -88,7 +89,7 @@ pub fn generate_thinking_request() -> Value {
 /// JSON Value representing a thinking-enabled request
 pub fn generate_thinking_request_with_budget(budget_tokens: u32) -> Value {
     json!({
-        "model": "claude-3-7-sonnet-20250219",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -125,7 +126,7 @@ pub fn generate_thinking_request_with_budget(budget_tokens: u32) -> Value {
 /// ```
 pub fn generate_tool_use_request(tools: Value) -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -150,7 +151,7 @@ pub fn generate_tool_use_request(tools: Value) -> Value {
 /// JSON Value representing a request with forced tool choice
 pub fn generate_forced_tool_request(tool_name: &str) -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -193,7 +194,7 @@ pub fn generate_forced_tool_request(tool_name: &str) -> Value {
 /// JSON Value representing a request with system prompt
 pub fn generate_request_with_system(system: Value) -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "system": system,
         "messages": [
             {
@@ -212,7 +213,7 @@ pub fn generate_request_with_system(system: Value) -> Value {
 /// JSON Value representing a request with image content
 pub fn generate_multimodal_request() -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -246,7 +247,7 @@ pub fn generate_multimodal_request() -> Value {
 /// JSON Value representing a request with stop sequences
 pub fn generate_request_with_stop_sequences(stop_sequences: Vec<&str>) -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -265,7 +266,7 @@ pub fn generate_request_with_stop_sequences(stop_sequences: Vec<&str>) -> Value 
 /// JSON Value representing a multi-turn conversation
 pub fn generate_conversation_request() -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -294,7 +295,7 @@ pub fn generate_conversation_request() -> Value {
 /// JSON Value representing a request with metadata
 pub fn generate_request_with_metadata(user_id: &str) -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "messages": [
             {
                 "role": "user",
@@ -315,7 +316,7 @@ pub fn generate_request_with_metadata(user_id: &str) -> Value {
 /// JSON Value representing a request with all optional parameters set
 pub fn generate_full_featured_request() -> Value {
     json!({
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-6",
         "system": "You are a helpful coding assistant.",
         "messages": [
             {
@@ -536,11 +537,11 @@ mod tests {
     #[test]
     fn test_generate_messages_request() {
         let request = generate_messages_request(
-            "claude-3-5-sonnet-20241022",
+            "claude-sonnet-4-6",
             json!([{"role": "user", "content": "Hello!"}]),
         );
 
-        assert_eq!(request["model"], "claude-3-5-sonnet-20241022");
+        assert_eq!(request["model"], "claude-sonnet-4-6");
         assert_eq!(request["messages"][0]["role"], "user");
         assert_eq!(request["messages"][0]["content"], "Hello!");
         assert_eq!(request["max_tokens"], 4096);
@@ -552,7 +553,7 @@ mod tests {
     fn test_generate_thinking_request() {
         let request = generate_thinking_request();
 
-        assert_eq!(request["model"], "claude-3-5-sonnet-20241022");
+        assert_eq!(request["model"], "claude-sonnet-4-6");
         assert!(request.get("thinking").is_some());
         assert_eq!(request["thinking"]["type"], "enabled");
         assert_eq!(request["thinking"]["budget_tokens"], 4000);
@@ -564,7 +565,7 @@ mod tests {
         let request = generate_thinking_request_with_budget(8000);
 
         assert_eq!(request["thinking"]["budget_tokens"], 8000);
-        assert_eq!(request["model"], "claude-3-7-sonnet-20250219");
+        assert_eq!(request["model"], "claude-sonnet-4-6");
     }
 
     #[test]
@@ -652,12 +653,12 @@ mod tests {
     #[test]
     fn test_generate_streaming_request() {
         let request = generate_streaming_request(
-            "claude-3-opus-20240229",
+            "claude-sonnet-4-6",
             json!([{"role": "user", "content": "Hi"}]),
         );
 
         assert_eq!(request["stream"], true);
-        assert_eq!(request["model"], "claude-3-opus-20240229");
+        assert_eq!(request["model"], "claude-sonnet-4-6");
     }
 
     #[test]

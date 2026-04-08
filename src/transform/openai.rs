@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! OpenAI to Anthropic format transformer.
 //!
 //! Converts OpenAI API format responses to Anthropic API format.

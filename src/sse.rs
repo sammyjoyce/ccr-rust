@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use crate::ratelimit::RateLimitTracker;
 use std::sync::Arc;
 use std::time::Instant;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Frontend implementation for Anthropic's Claude Code API format.
 //!
 //! This frontend handles requests and responses that conform to the Anthropic
@@ -71,7 +72,7 @@ impl Frontend for ClaudeCodeFrontend {
         let model = body
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or("claude-3-opus")
+            .unwrap_or("claude-sonnet-4-6")
             .to_string();
 
         // Extract system prompt if present (Anthropic has top-level system)
@@ -374,7 +375,7 @@ mod tests {
         let frontend = create_frontend();
         let headers = HeaderMap::new();
         let body = json!({
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "system": "You are helpful",
             "messages": [{"role": "user", "content": "Hi"}]
         });
@@ -413,7 +414,7 @@ mod tests {
     fn test_parse_request_simple() {
         let frontend = create_frontend();
         let body = json!({
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "messages": [
                 {"role": "user", "content": "Hello"}
             ],
@@ -423,7 +424,7 @@ mod tests {
 
         let request = frontend.parse_request(body).unwrap();
 
-        assert_eq!(request.model, "claude-3-opus");
+        assert_eq!(request.model, "claude-sonnet-4-6");
         assert_eq!(request.messages.len(), 1);
         assert_eq!(request.messages[0].role, "user");
         assert_eq!(request.max_tokens, Some(100));
@@ -434,7 +435,7 @@ mod tests {
     fn test_parse_request_with_system() {
         let frontend = create_frontend();
         let body = json!({
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "system": "You are helpful",
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -449,7 +450,7 @@ mod tests {
     fn test_parse_request_with_tools() {
         let frontend = create_frontend();
         let body = json!({
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "Hi"}],
             "tools": [
                 {
@@ -480,7 +481,7 @@ mod tests {
             id: "msg_01AbCdEfGhIjKlMn".to_string(),
             response_type: "message".to_string(),
             role: "assistant".to_string(),
-            model: "claude-3-opus".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             content: vec![ContentBlock::Text {
                 text: "Hello, world!".to_string(),
             }],
@@ -499,7 +500,7 @@ mod tests {
         assert_eq!(json["id"], "msg_01AbCdEfGhIjKlMn");
         assert_eq!(json["type"], "message");
         assert_eq!(json["role"], "assistant");
-        assert_eq!(json["model"], "claude-3-opus");
+        assert_eq!(json["model"], "claude-sonnet-4-6");
         assert_eq!(json["content"][0]["type"], "text");
         assert_eq!(json["content"][0]["text"], "Hello, world!");
         assert_eq!(json["stop_reason"], "end_turn");
@@ -512,7 +513,7 @@ mod tests {
             id: "msg_01Xy".to_string(),
             response_type: "message".to_string(),
             role: "assistant".to_string(),
-            model: "claude-3-opus".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             content: vec![
                 ContentBlock::Thinking {
                     thinking: "Let me think...".to_string(),
@@ -544,7 +545,7 @@ mod tests {
             id: "msg_01Max".to_string(),
             response_type: "message".to_string(),
             role: "assistant".to_string(),
-            model: "claude-3-opus".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             content: vec![ContentBlock::Text {
                 text: "This was cut off...".to_string(),
             }],

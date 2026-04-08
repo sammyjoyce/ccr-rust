@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn bench_placeholder(c: &mut Criterion) {

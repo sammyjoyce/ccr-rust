@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 pub mod cargo;
 pub mod git;
 pub mod grep;

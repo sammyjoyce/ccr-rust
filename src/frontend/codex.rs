@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Frontend implementation for OpenAI's Codex CLI API format.
 //!
 //! This frontend handles requests and responses that conform to the OpenAI
@@ -544,7 +545,7 @@ mod tests {
         let headers = HeaderMap::new();
         // Pure Anthropic format: has top-level model but messages without role field
         let body = json!({
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "messages": [{"content": "Hi"}]
         });
 

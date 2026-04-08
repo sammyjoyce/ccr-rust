@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Minimax M2.5 API transformer.
 //!
 //! Handles Minimax-specific request/response transformations:

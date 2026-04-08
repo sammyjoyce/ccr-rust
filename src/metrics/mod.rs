@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 mod handlers;
 pub use handlers::*;
 
@@ -225,7 +226,6 @@ pub struct PreRequestAuditEntry {
     pub total_tokens: u64,
 }
 
-
 /// Percentage thresholds for drift severity classification.
 const DRIFT_WARN_PCT: f64 = 10.0;
 const DRIFT_ALERT_PCT: f64 = 25.0;
@@ -245,7 +245,6 @@ pub static TOTAL_INPUT_TOKENS: AtomicU64 = AtomicU64::new(0);
 pub static TOTAL_OUTPUT_TOKENS: AtomicU64 = AtomicU64::new(0);
 pub static TOTAL_REQUESTS: AtomicU64 = AtomicU64::new(0);
 pub static TOTAL_FAILURES: AtomicU64 = AtomicU64::new(0);
-
 
 /// Get the current number of active streams.
 pub fn get_active_streams() -> f64 {
@@ -621,7 +620,6 @@ pub fn verify_token_usage(tier: &str, local_estimate: u64, upstream_input: u64) 
     entry.last_upstream = upstream_input;
     persist_token_drift_state(tier, entry);
 }
-
 
 #[cfg(test)]
 mod tests {

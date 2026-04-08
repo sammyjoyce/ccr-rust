@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests for Codex streaming conversion from Anthropic SSE to OpenAI SSE.
 
 use axum::body::{to_bytes, Body};
@@ -181,7 +182,7 @@ async fn test_anthropic_stream_chunk_boundary_inside_frame_is_parsed() {
                 "id": "msg_boundary",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-3-opus",
+                "model": "claude-sonnet-4-6",
                 "content": []
             }
         }),
@@ -278,7 +279,7 @@ async fn test_anthropic_stream_emits_first_assistant_delta_before_completion() {
                         "id": "msg_early",
                         "type": "message",
                         "role": "assistant",
-                        "model": "claude-3-opus",
+                        "model": "claude-sonnet-4-6",
                         "content": []
                     }
                 }),
@@ -359,7 +360,7 @@ async fn test_anthropic_stream_tool_deltas_and_stop_events_are_well_formed() {
                         "id": "msg_tool",
                         "type": "message",
                         "role": "assistant",
-                        "model": "claude-3-opus",
+                        "model": "claude-sonnet-4-6",
                         "content": []
                     }
                 }),
@@ -482,7 +483,7 @@ async fn test_anthropic_stream_emits_exactly_one_done_marker_at_end() {
                         "id": "msg_done",
                         "type": "message",
                         "role": "assistant",
-                        "model": "claude-3-opus",
+                        "model": "claude-sonnet-4-6",
                         "content": []
                     }
                 }),
@@ -554,7 +555,7 @@ async fn test_anthropic_stream_utf8_split_across_chunks() {
                 "id": "msg_utf8",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-3-opus",
+                "model": "claude-sonnet-4-6",
                 "content": []
             }
         }),
@@ -620,7 +621,7 @@ async fn test_anthropic_stream_abrupt_closure_emits_done_marker() {
                         "id": "msg_abrupt",
                         "type": "message",
                         "role": "assistant",
-                        "model": "claude-3-opus",
+                        "model": "claude-sonnet-4-6",
                         "content": []
                     }
                 }),

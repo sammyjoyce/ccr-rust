@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests for Kimi (Moonshot) backend routing.
 //!
 //! Tests end-to-end flow for Kimi K2.5 via ccr-rust's Anthropic protocol

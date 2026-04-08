@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Redis persistence for metrics.
 //
 // Saves and restores Prometheus counters, gauges, histograms, token drift

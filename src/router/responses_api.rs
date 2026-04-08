@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // OpenAI Responses API compatibility layer.
 //
 // Converts between OpenAI Responses API format and OpenAI Chat Completions format.

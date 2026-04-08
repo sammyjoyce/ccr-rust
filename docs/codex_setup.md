@@ -115,11 +115,7 @@ If your Z.AI account still exposes `glm-5` instead of `glm-5.1`, keep both model
 ### 2.2 Start CCR-Rust and inspect the routes
 
 ```bash
-# Using the helper script
-cd /path/to/AlphaHENG
-./scripts/ccr-rust.sh start
-
-# Or manually
+# Start the server
 ccr-rust start --config ~/.claude-code-router/config.json
 ```
 
@@ -225,12 +221,12 @@ CCR-Rust normalizes reasoning output from different providers into a unified Ope
 
 All reasoning-capable providers return `reasoning_content` as a structured field:
 
-| Provider | Input Format | Output Format |
-|----------|--------------|---------------|
-| DeepSeek | `reasoning_content` (native) | `reasoning_content` (preserved) |
-| MiniMax M2.7 | `reasoning_details` | `reasoning_content` (mapped) |
-| GLM-5.1 / GLM-5 (Z.AI) | `<|im_start|>` tags | `reasoning_content` (extracted) |
-| Kimi K2 | `◁think▷` tokens | `reasoning_content` (extracted) |
+| Provider               | Input Format                 | Output Format                   |
+| ---------------------- | ---------------------------- | ------------------------------- | ------- | ------------------------------- |
+| DeepSeek               | `reasoning_content` (native) | `reasoning_content` (preserved) |
+| MiniMax M2.7           | `reasoning_details`          | `reasoning_content` (mapped)    |
+| GLM-5.1 / GLM-5 (Z.AI) | `<                           | im_start                        | >` tags | `reasoning_content` (extracted) |
+| Kimi K2                | `◁think▷` tokens             | `reasoning_content` (extracted) |
 
 ### 5.2 Multi-Turn Tool Use
 
@@ -301,17 +297,21 @@ This enables proper usage tracking and token attribution on the OpenRouter platf
 ### 7.1 "Connection Refused" Error
 
 **Symptom:**
+
 ```
 Error: connect ECONNREFUSED 127.0.0.1:3456
 ```
 
 **Solutions:**
+
 1. Ensure CCR-Rust is running:
+
    ```bash
    ccr-rust status
    ```
 
 2. Check the correct port is configured:
+
    ```bash
    lsof -i :3456
    ```
@@ -324,17 +324,21 @@ Error: connect ECONNREFUSED 127.0.0.1:3456
 ### 7.2 "Invalid API Key" Error
 
 **Symptom:**
+
 ```
 Error: 401 Unauthorized - Invalid API key
 ```
 
 **Solutions:**
+
 1. Verify the Codex client token is set (any non-empty string):
+
    ```bash
    echo $OPENAI_API_KEY
    ```
 
 2. Check CCR-Rust config has the correct provider API key:
+
    ```bash
    ccr-rust validate
    ```
@@ -347,24 +351,28 @@ Error: 401 Unauthorized - Invalid API key
 ### 7.3 "Model Not Found" Error
 
 **Symptom:**
+
 ```
 Error: 404 - Model 'xxx' not found
 ```
 
 **Solutions:**
+
 1. Ask CCR-Rust which model IDs it currently exposes:
-  ```bash
-  curl http://127.0.0.1:3456/v1/models | jq '.data[].id'
-  ```
+
+```bash
+curl http://127.0.0.1:3456/v1/models | jq '.data[].id'
+```
 
 2. Use one of those exact route IDs in Codex, for example:
-  ```bash
-  codex --profile ccr --model qwen,qwen3-coder-next exec "Explain this file"
-  ```
+
+```bash
+codex --profile ccr --model qwen,qwen3-coder-next exec "Explain this file"
+```
 
 3. If Z.AI only exposes `glm-5` on your account, switch the profile model accordingly:
    ```bash
-  codex --profile ccr --config 'profiles.ccr.model="zai,glm-5"'
+   codex --profile ccr --config 'profiles.ccr.model="zai,glm-5"'
    ```
 
 ### 7.4 High Latency or Timeouts
@@ -372,12 +380,15 @@ Error: 404 - Model 'xxx' not found
 **Symptom:** Slow responses or timeout errors.
 
 **Solutions:**
+
 1. Check CCR-Rust latency metrics:
+
    ```bash
    curl http://127.0.0.1:3456/v1/latencies
    ```
 
 2. Increase timeout in CCR-Rust config:
+
    ```json
    "API_TIMEOUT_MS": 600000
    ```
@@ -392,9 +403,11 @@ Error: 404 - Model 'xxx' not found
 **Symptom:** Codex doesn't execute commands or file operations.
 
 **Solutions:**
+
 1. Ensure you're using `--full` mode:
+
    ```bash
-  codex --profile ccr exec --full "Run the tests"
+   codex --profile ccr exec --full "Run the tests"
    ```
 
 2. Check CCR-Rust supports tool transformation:
@@ -408,11 +421,13 @@ Error: 404 - Model 'xxx' not found
 Enable debug output for troubleshooting:
 
 **CCR-Rust debug logs:**
+
 ```bash
 RUST_LOG=ccr_rust=debug ccr-rust start
 ```
 
 **Codex debug output:**
+
 ```bash
 DEBUG=* codex --profile ccr exec "Test command"
 ```
@@ -460,6 +475,7 @@ CCR-Rust supports preset routes that Codex can use:
 ```
 
 Access via direct URL:
+
 ```bash
 # Use preset endpoint directly
 curl http://127.0.0.1:3456/preset/coding/v1/chat/completions \

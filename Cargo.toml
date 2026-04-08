@@ -1,9 +1,13 @@
 [package]
 name = "ccr-rust"
-version = "0.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["RESMP-DEV"]
 license = "AGPL-3.0-or-later"
+description = "Multi-provider LLM router with automatic failover, streaming, and observability"
+repository = "https://github.com/RESMP-DEV/ccr-rust"
+keywords = ["llm", "router", "proxy", "anthropic", "openai"]
+categories = ["web-programming", "command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0"
@@ -48,7 +52,19 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 zstd = "0.13"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+http-body-util = "0.1"
 tempfile = "3"
+tower = { version = "0.4", features = ["util"] }
+wiremock = "0.6"
+
+[[bench]]
+name = "concurrent_streams"
+harness = false
+
+[features]
+default = []
+dashboard = ["reqwest/blocking"]
 
 [profile.release]
 opt-level = 3

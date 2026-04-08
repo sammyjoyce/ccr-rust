@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Transform module with factory-based registry.
 //!
 //! This module provides a factory-based approach to transformer instantiation,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Debug capture module for recording raw request/response data.
 //!
 //! This module captures raw API interactions for debugging provider issues,
@@ -427,9 +428,9 @@ pub struct CaptureStats {
 
 /// Expand ~ to home directory.
 fn expand_tilde(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(rest) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(&path[2..]);
+            return home.join(rest);
         }
     }
     PathBuf::from(path)

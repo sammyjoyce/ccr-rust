@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashSet;

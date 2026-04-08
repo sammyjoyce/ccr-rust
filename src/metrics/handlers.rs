@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Metrics HTTP handler endpoints.
 //
 // These handlers serve JSON and Prometheus-text responses for

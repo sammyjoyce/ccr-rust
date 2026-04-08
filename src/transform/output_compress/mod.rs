@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Output compression transformer module.
 //!
 //! Walks response `content` arrays for `tool_result` blocks containing text

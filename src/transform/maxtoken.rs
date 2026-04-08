@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Max tokens transformer.
 //!
 //! Overrides the `max_tokens` field in requests to ensure consistent limits.
@@ -129,7 +130,7 @@ mod tests {
 
     fn test_request() -> Value {
         serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
         })

@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 pub mod config;
 #[cfg(feature = "dashboard")]
 pub mod dashboard;
 pub mod debug_capture;
 pub mod frontend;
-pub mod jsonrpc;
 pub mod mcp;
 pub mod metrics;
 pub mod proxy;

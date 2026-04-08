@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -125,8 +126,6 @@ pub struct ProviderTransformer {
 
 impl ProviderTransformer {
     /// Get the provider-level transformer chain.
-    #[allow(dead_code)]
-    // TODO: integrate into request flow or remove
     pub fn provider_transformers(&self) -> &[TransformerEntry] {
         &self.use_list
     }
@@ -147,8 +146,6 @@ impl ProviderTransformer {
     /// Check whether there is exactly one provider-level transformer and it
     /// matches `name`, with no model overrides. Used by the bypass/passthrough
     /// logic that mirrors the Node.js `shouldBypassTransformers`.
-    #[allow(dead_code)]
-    // TODO: integrate into request flow or remove
     pub fn is_sole_transformer(&self, name: &str) -> bool {
         self.use_list.len() == 1
             && self.use_list[0].name() == name

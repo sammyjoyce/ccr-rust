@@ -180,11 +180,7 @@ The `Frontend.claude_code.modelMappings` section maps Claude Code model names to
 ### 2.3 Start CCR-Rust
 
 ```bash
-# Using the helper script
-cd /path/to/AlphaHENG
-./scripts/ccr-rust.sh start
-
-# Or manually
+# Start the server
 ccr-rust start --config ~/.claude-code-router/config.json
 ```
 
@@ -412,9 +408,9 @@ If no reasoning text is available, send an empty string:
 }
 ```
 
-### Configuration (`config.alphaheng.json`)
+### Configuration (Multi-Provider Example)
 
-Provider setup used by AlphaHENG (`contrib/ccr-rust/config.alphaheng.json`):
+Example multi-provider configuration:
 
 ```json
 {

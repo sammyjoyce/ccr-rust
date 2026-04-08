@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use parking_lot::RwLock;
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;

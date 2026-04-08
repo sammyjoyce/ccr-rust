@@ -14,15 +14,16 @@ Production incidents, debugging patterns, and architectural insights accumulated
 
 **Fix:** Handle all three `AnthropicContentBlock` variants with correct SSE event types:
 
-| Block Type | `content_block_start` | Delta Event(s) |
-|---|---|---|
-| `Text` | `{"type": "text", "text": ""}` | `text_delta` |
-| `ToolUse` | `{"type": "tool_use", "id": ..., "name": ..., "input": {}}` | `input_json_delta` |
-| `Thinking` | `{"type": "thinking", "thinking": ""}` | `thinking_delta` + `signature_delta` |
+| Block Type | `content_block_start`                                       | Delta Event(s)                       |
+| ---------- | ----------------------------------------------------------- | ------------------------------------ |
+| `Text`     | `{"type": "text", "text": ""}`                              | `text_delta`                         |
+| `ToolUse`  | `{"type": "tool_use", "id": ..., "name": ..., "input": {}}` | `input_json_delta`                   |
+| `Thinking` | `{"type": "thinking", "thinking": ""}`                      | `thinking_delta` + `signature_delta` |
 
 **Lesson:** When converting between formats (JSON → SSE, Anthropic → OpenAI, etc.), always test with ALL content types the protocol supports, not just text. Catch-all `_ => continue` in match arms on enums is a code smell for protocol conversion code — it silently drops data instead of failing loudly.
 
 **Detection pattern:** Compare captures at two levels:
+
 1. HTTP-level captures (`~/.ccr-rust/captures/provider_*.json`) — shows what the backend actually returned
 2. Task-level captures (`~/.ccr-rust/captures/agent_*.json`) — shows what Claude CLI received
 
@@ -32,11 +33,12 @@ If (1) has `tool_use` content but (2) shows no `assistant` event, the conversion
 
 ## 2. `forceNonStreaming` is a critical code path (April 2026)
 
-**Context:** AlphaHENG runs with `forceNonStreaming: true` because non-streaming responses are simpler to capture, debug, and replay. But this means every response goes through `wrap_json_response_as_sse()` → `emit_anthropic_sse_events()`, which must be a perfect Anthropic Messages API SSE emitter.
+**Context:** When running with `forceNonStreaming: true` (non-streaming responses are simpler to capture, debug, and replay), every response goes through `wrap_json_response_as_sse()` → `emit_anthropic_sse_events()`, which must be a perfect Anthropic Messages API SSE emitter.
 
 **Lesson:** `forceNonStreaming` is not a "simplification" — it introduces a full protocol serialization layer. Any feature added to the streaming path must also work in the pseudo-SSE path. Test both paths whenever touching response handling.
 
 **Checklist when modifying response types:**
+
 - [ ] Does `emit_anthropic_sse_events()` handle the new block type?
 - [ ] Does `stream_anthropic_response_with_tracking()` pass it through?
 - [ ] Does `stream_response_translated()` (OpenAI → Anthropic) translate it?
@@ -47,6 +49,7 @@ If (1) has `tool_use` content but (2) shows no `assistant` event, the conversion
 ## 3. Debug captures are essential for cross-layer debugging
 
 **Pattern:** CCR-Rust sits between Claude CLI and the backend API. When something fails, the bug could be in:
+
 1. The backend's response format
 2. CCR-Rust's response transformation
 3. CCR-Rust's SSE serialization
@@ -55,6 +58,7 @@ If (1) has `tool_use` content but (2) shows no `assistant` event, the conversion
 **The `DebugCapture` system (`capture_success: true`)** saves both HTTP-level captures (what the backend returned) and is referenced by task-level captures (what the agent reported). Comparing these two layers immediately narrows the bug to the right component.
 
 **Config:**
+
 ```json
 {
   "DebugCapture": {
@@ -67,6 +71,7 @@ If (1) has `tool_use` content but (2) shows no `assistant` event, the conversion
 ```
 
 **Analysis pattern:**
+
 ```bash
 # HTTP-level: what did the backend return?
 python3 -c "
@@ -96,6 +101,7 @@ for e in events:
 **Observation:** When the first Kimi request hits a 429, Claude CLI retries internally (via `api_retry` event). The retry may succeed but still produce an `error_during_execution` result if the conversion layer has bugs (like the tool_use block dropping above). This makes the 429 look like the root cause when it's actually an unrelated SSE conversion bug.
 
 **Lesson:** Separate rate-limit failures from conversion failures in post-mortems. Check:
+
 - Does the capture show a 200 response with valid content? → Conversion bug
 - Does the capture show only 429s? → Actual rate limit issue
 
@@ -122,11 +128,11 @@ AnthropicContentBlock::Thinking { .. } => { /* emit thinking */ }
 
 ## Appendix: Diagnostic Cheat Sheet
 
-| Symptom | Likely Cause | Check |
-|---|---|---|
-| `ede_diagnostic result_type=user last_content_type=n/a stop_reason=tool_use` | Pseudo-SSE dropping tool_use blocks | HTTP capture vs task capture comparison |
-| `model not progressing for 90s` | Backend timeout or stall | Check ccr-rust logs + backend health |
-| All tasks route to lowest tier | Client caching model field | `grep "Direct routing" /tmp/ccr-rust.log` |
-| 429 on all requests | Provider rate limit | `curl localhost:3456/metrics \| grep rate_limit` |
-| Exit code 1, events=[init, result] (no assistant) | Response conversion failure | HTTP capture shows valid response but SSE conversion mangled it |
-| Exit code 1, events=[init, api_retry×N, result] | API error after retries | Check `error_status` in api_retry events |
+| Symptom                                                                      | Likely Cause                        | Check                                                           |
+| ---------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------- |
+| `ede_diagnostic result_type=user last_content_type=n/a stop_reason=tool_use` | Pseudo-SSE dropping tool_use blocks | HTTP capture vs task capture comparison                         |
+| `model not progressing for 90s`                                              | Backend timeout or stall            | Check ccr-rust logs + backend health                            |
+| All tasks route to lowest tier                                               | Client caching model field          | `grep "Direct routing" /tmp/ccr-rust.log`                       |
+| 429 on all requests                                                          | Provider rate limit                 | `curl localhost:3456/metrics \| grep rate_limit`                |
+| Exit code 1, events=[init, result] (no assistant)                            | Response conversion failure         | HTTP capture shows valid response but SSE conversion mangled it |
+| Exit code 1, events=[init, api_retry×N, result]                              | API error after retries             | Check `error_status` in api_retry events                        |

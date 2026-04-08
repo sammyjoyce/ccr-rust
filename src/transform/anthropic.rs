@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Anthropic to OpenAI format transformer.
 //!
 //! Converts Anthropic API format requests to OpenAI API format.
@@ -322,7 +323,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "system": "You are a helpful assistant.",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
@@ -346,7 +347,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "system": [
                 {"type": "text", "text": "You are a helpful assistant."},
                 {"type": "text", "text": "Be concise."}
@@ -375,7 +376,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "system": "You are a helpful assistant.",
             "max_tokens": 1000
         });
@@ -393,7 +394,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "messages": [
                 {
                     "role": "user",
@@ -418,7 +419,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "metadata": {"user_id": "123"},
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
@@ -435,7 +436,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "stop_sequences": ["STOP", "END"],
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
@@ -453,7 +454,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "tool_choice": "any",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
@@ -470,7 +471,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "tool_choice": {"type": "tool", "name": "calculator"},
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
@@ -488,7 +489,7 @@ mod tests {
         let transformer = AnthropicToOpenaiTransformer;
 
         let anthropic_request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "tools": [
                 {
                     "name": "calculator",

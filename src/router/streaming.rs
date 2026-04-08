@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

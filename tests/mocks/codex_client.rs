@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Mock Codex CLI client for testing OpenAI API format requests.
 //!
 //! This module provides helper functions to generate realistic OpenAI API request

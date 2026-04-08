@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! DeepSeek API transformer.
 //!
 //! Handles DeepSeek-specific request/response transformations including:

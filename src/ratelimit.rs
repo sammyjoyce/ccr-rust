@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use prometheus::{register_counter_vec, CounterVec};

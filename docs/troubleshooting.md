@@ -3,11 +3,13 @@
 ## Connection Issues
 
 **"Connection refused"**
+
 - Check provider URL in config
 - Verify API endpoint is accessible
 - Check firewall rules
 
 **SSL/TLS errors**
+
 - Ensure system CA certificates are installed
 - Try with `RUST_LOG=reqwest=debug` for details
 
@@ -40,6 +42,7 @@ RUST_LOG=ccr_rust=debug,tower_http=debug ccr-rust start --config ~/.claude-code-
 ```
 
 Look for these log lines:
+
 - `Rate limited on ...`
 - `Rate limited, backing off`
 - `Skipping tier: backoff in effect`
@@ -71,16 +74,19 @@ data: {"type":"response.failed","response":{"id":"resp_failed","object":"respons
 ```
 
 Client handling rule:
+
 - Treat `event: response.failed` as terminal.
 - Parse `response.error.message` for provider details.
 
 ## Format Translation
 
 **Tool calls not working**
+
 - Ensure transformer chain includes `anthropic-to-openai`
 - Check provider supports function calling
 
 **Missing system prompt**
+
 - Anthropic `system` field is auto-converted to OpenAI format
 - Verify it's not being filtered by provider
 
@@ -89,15 +95,17 @@ Client handling rule:
 ### Tool_use blocks silently dropped
 
 **Symptom:** Claude CLI exits with code 1 and logs:
+
 ```
 [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use
 ```
 
 All affected tasks show `num_turns=1`, `stop_reason=tool_use`, and no `assistant` message event in the output. The model never gets to use its tools.
 
-**Cause:** When `forceNonStreaming: true` is enabled (the default for AlphaHENG), non-streaming JSON responses from backends are converted to SSE events via `emit_anthropic_sse_events()` in `streaming.rs`. If this function doesn't handle all `AnthropicContentBlock` variants — specifically `ToolUse` and `Thinking` — those blocks are silently dropped. Claude CLI receives `stop_reason: tool_use` but no actual tool content blocks, which it treats as an error.
+**Cause:** When `forceNonStreaming: true` is enabled, non-streaming JSON responses from backends are converted to SSE events via `emit_anthropic_sse_events()` in `streaming.rs`. If this function doesn't handle all `AnthropicContentBlock` variants — specifically `ToolUse` and `Thinking` — those blocks are silently dropped. Claude CLI receives `stop_reason: tool_use` but no actual tool content blocks, which it treats as an error.
 
 **Detection:**
+
 ```bash
 # Check captures for tool_use responses that succeeded at the proxy level
 ls ~/.ccr-rust/captures/ | grep kimi
@@ -117,11 +125,13 @@ print([c['type'] for c in resp['content']])  # Should show ['text', 'tool_use']
 ```
 
 **Fix applied:** `emit_anthropic_sse_events()` now handles all three block types:
+
 - `Text` → `content_block_start` + `text_delta`
 - `ToolUse` → `content_block_start` (with id/name/empty input) + `input_json_delta` (with full JSON)
 - `Thinking` → `content_block_start` + `thinking_delta` + `signature_delta`
 
 **Verification:**
+
 ```bash
 # Send a tool-calling request and verify tool_use appears in SSE output
 curl -s -N http://127.0.0.1:3456/v1/messages \
@@ -142,6 +152,7 @@ curl -s -N http://127.0.0.1:3456/v1/messages \
 ## Performance
 
 **High latency**
+
 - Check `/v1/latencies` for slow tiers
 - EWMA will auto-reorder, but may take 3+ requests
 - Consider adjusting tier order in config
@@ -153,11 +164,13 @@ curl -s -N http://127.0.0.1:3456/v1/messages \
 **Cause**: Clients like Codex CLI and Claude Code cache the `model` field from successful responses. If a request once fell back to `openrouter,openrouter/aurora-alpha`, subsequent requests will include that exact model string, causing CCR-Rust to prioritize that tier.
 
 **Detection**:
+
 ```bash
 tail -500 /tmp/ccr-rust.log | grep -E "Direct routing|moved to front"
 ```
 
 If you see lines like:
+
 ```
 Direct routing: openrouter,openrouter/aurora-alpha moved to front
 ```
@@ -177,6 +190,7 @@ This confirms the client is requesting a specific tier.
 This forces all requests to start from tier 0, regardless of what model the client specifies.
 
 **Restart required** after changing config:
+
 ```bash
 ccr-rust stop && ccr-rust start
 ```

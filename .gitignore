@@ -8,6 +8,7 @@
 
 # Config files with secrets
 config.json
+config.*.json
 *.local.json
 
 # IDE
@@ -23,4 +24,9 @@ Thumbs.db
 
 # Task specification (internal planning doc)
 tasks/
-config.alphaheng.json
+
+# Runtime output
+agent_workspace/
+logs/
+reports/
+*.log

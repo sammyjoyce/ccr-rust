@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tool catalog compression transformer.
 //!
 //! Compresses tool definitions in requests to reduce prompt token usage.
@@ -165,7 +166,7 @@ mod tests {
 
     fn sample_request() -> Value {
         json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "hi"}],
             "tools": [
                 {
@@ -275,7 +276,7 @@ mod tests {
     #[test]
     fn test_no_tools_key() {
         let t = ToolCompressTransformer::new(CompressionLevel::High);
-        let req = json!({"model": "claude-3", "messages": []});
+        let req = json!({"model": "claude-sonnet-4-6", "messages": []});
         let result = t.transform_request(req.clone()).unwrap();
         assert_eq!(req, result);
     }

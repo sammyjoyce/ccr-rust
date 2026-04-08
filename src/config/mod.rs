@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 mod types;
 pub use types::*;
 
@@ -12,7 +13,7 @@ use crate::debug_capture::DebugCaptureConfig;
 /// Named routing preset with optional parameter overrides.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PresetConfig {
-    /// Provider,model to route to (e.g., "anthropic,claude-3-opus")
+    /// Provider,model to route to (e.g., "anthropic,claude-sonnet-4-6")
     pub route: String,
 
     /// Optional max_tokens override

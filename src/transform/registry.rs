@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Factory-based transformer registry.
 //!
 //! This module provides a registry for creating transformer instances
 //! from factory functions, allowing dynamic instantiation based on configuration.
 
 use super::{
-    AnthropicToOpenaiTransformer, DeepSeekTransformer, GlmTransformer,
-    KimiTransformer, MaxTokenTransformer, MinimaxTransformer, OpenAiToAnthropicTransformer,
+    AnthropicToOpenaiTransformer, DeepSeekTransformer, GlmTransformer, KimiTransformer,
+    MaxTokenTransformer, MinimaxTransformer, OpenAiToAnthropicTransformer,
     OutputCompressTransformer, ThinkTagTransformer, ToolCompressTransformer,
 };
 use crate::config::TransformerEntry;
@@ -33,8 +34,8 @@ impl TransformerRegistry {
 
         // Register provider-specific transformers
         // These transformers adapt provider-specific response formats
-        // into a standardized format for the AlphaHENG system.
-        // Tier 2: Z.AI GLM-5
+        // into a standardized format for downstream consumption.
+        // Z.AI GLM-5
         registry.register("zai", |_opts| Box::new(GlmTransformer::default()));
         // Tier 4: Minimax M2.5 (high-performance reasoning, long context)
         registry.register("minimax", |_opts| Box::new(MinimaxTransformer));

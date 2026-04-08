@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-07
+
+### Added
+
+- **Benchmark harness** — Added `criterion` benchmarks (`benches/concurrent_streams.rs`)
+- **Crate metadata** — `description`, `repository`, `keywords`, and `categories` in Cargo.toml
+
 ### Fixed
 
 - **Pseudo-SSE tool_use and thinking blocks dropped** — `emit_anthropic_sse_events()` in
@@ -18,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Now handles all three `AnthropicContentBlock` variants: `Text` (text_delta), `ToolUse`
   (content_block_start with metadata + input_json_delta), and `Thinking` (thinking_delta +
   signature_delta). Added 3 unit tests.
+
+### Changed
+
+- **Open source cleanup** — Removed internal framework references from documentation and source.
+  Added SPDX license headers to all source files.
 
 ## [1.1.1] - 2025-02-14
 
@@ -48,9 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 With Gemini Flash for context compression:
 
-| Scenario | Before | After | Savings |
-|----------|--------|-------|---------|
-| 200K → 20K tokens | $0.60 | $0.075 | **87.5%** |
+| Scenario          | Before | After  | Savings   |
+| ----------------- | ------ | ------ | --------- |
+| 200K → 20K tokens | $0.60  | $0.075 | **87.5%** |
 
 At 1000 requests/day, this saves **$500+/day**.
 

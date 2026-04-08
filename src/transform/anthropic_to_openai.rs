@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Anthropic to OpenAI response transformer.
 //!
 //! Converts Anthropic API format responses to OpenAI API format.
@@ -521,7 +522,7 @@ mod tests {
             "id": "msg_abc123",
             "type": "message",
             "role": "assistant",
-            "model": "claude-3-opus-20240229",
+            "model": "claude-sonnet-4-6",
             "content": [
                 {"type": "text", "text": "Hello, world!"}
             ],
@@ -536,7 +537,7 @@ mod tests {
 
         assert_eq!(result["id"], "msg_abc123");
         assert_eq!(result["object"], "chat.completion");
-        assert_eq!(result["model"], "claude-3-opus-20240229");
+        assert_eq!(result["model"], "claude-sonnet-4-6");
         assert_eq!(result["choices"][0]["message"]["role"], "assistant");
         assert_eq!(result["choices"][0]["message"]["content"], "Hello, world!");
         assert_eq!(result["choices"][0]["finish_reason"], "stop");
@@ -551,7 +552,7 @@ mod tests {
             "id": "msg_tool123",
             "type": "message",
             "role": "assistant",
-            "model": "claude-3-opus-20240229",
+            "model": "claude-sonnet-4-6",
             "content": [
                 {"type": "text", "text": "I'll calculate that for you."},
                 {
@@ -596,7 +597,7 @@ mod tests {
             "id": "msg_max123",
             "type": "message",
             "role": "assistant",
-            "model": "claude-3-opus-20240229",
+            "model": "claude-sonnet-4-6",
             "content": [
                 {"type": "text", "text": "This is incomplete..."}
             ],
@@ -622,7 +623,7 @@ mod tests {
                 "id": "msg_stream123",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-3-opus-20240229",
+                "model": "claude-sonnet-4-6",
                 "content": [],
                 "stop_reason": null,
                 "stop_sequence": null,
@@ -728,7 +729,7 @@ mod tests {
             "id": "msg_multi",
             "type": "message",
             "role": "assistant",
-            "model": "claude-3-opus-20240229",
+            "model": "claude-sonnet-4-6",
             "content": [
                 {"type": "text", "text": "First paragraph."},
                 {"type": "text", "text": "Second paragraph."}

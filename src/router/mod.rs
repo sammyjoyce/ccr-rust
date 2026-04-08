@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 mod types;
 pub use types::*;
 
@@ -409,7 +410,7 @@ mod tests {
     #[test]
     fn test_translate_request_with_system() {
         let request = AnthropicRequest {
-            model: "claude-3".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![Message {
                 role: "human".to_string(),
                 content: serde_json::Value::String("Hello".to_string()),
@@ -561,7 +562,7 @@ mod tests {
     #[test]
     fn test_translate_tool_result() {
         let request = AnthropicRequest {
-            model: "claude-3".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),

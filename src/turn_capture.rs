@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Streaming turn capture state machine for tracking multi-thread responses.
 //!
 //! Inspired by the `TurnCaptureState` in codex-plugin-cc (codex.mjs lines 297-605).
@@ -187,7 +188,8 @@ impl TurnCaptureState {
         self.thread_ids.insert(thread_id.to_owned());
         if let Some(l) = label {
             if !l.is_empty() {
-                self.thread_labels.insert(thread_id.to_owned(), l.to_owned());
+                self.thread_labels
+                    .insert(thread_id.to_owned(), l.to_owned());
             }
         }
     }
@@ -478,10 +480,7 @@ mod tests {
         );
         assert!(state.thread_ids.contains("t-sub"));
         // agentNickname takes priority.
-        assert_eq!(
-            state.thread_labels.get("t-sub"),
-            Some(&"Rev".to_string())
-        );
+        assert_eq!(state.thread_labels.get("t-sub"), Some(&"Rev".to_string()));
     }
 
     #[test]

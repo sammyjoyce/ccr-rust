@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Frontend detection helpers for Codex and Claude Code clients.
 
 use axum::http::{header::USER_AGENT, HeaderMap};
@@ -118,7 +119,7 @@ mod tests {
     fn detects_claude_code_from_anthropic_body_shape() {
         let headers = HeaderMap::new();
         let body = json!({
-            "model": "claude-3-5-sonnet",
+            "model": "claude-sonnet-4-6",
             "messages": [{"content": "Hello"}]
         });
 

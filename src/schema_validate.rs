@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Optional JSON Schema validation middleware for response bodies.
 //!
 //! Validates the final assistant message text against a JSON Schema,
@@ -29,10 +30,9 @@ impl SchemaValidator {
 
     /// Create a validator from an inline JSON string.
     pub fn from_json(json: &str) -> Result<Self> {
-        let schema: Value =
-            serde_json::from_str(json).context("parsing schema JSON")?;
-        let validator = Validator::new(&schema)
-            .map_err(|e| anyhow::anyhow!("compiling JSON schema: {e}"))?;
+        let schema: Value = serde_json::from_str(json).context("parsing schema JSON")?;
+        let validator =
+            Validator::new(&schema).map_err(|e| anyhow::anyhow!("compiling JSON schema: {e}"))?;
         Ok(Self { validator })
     }
 
@@ -41,9 +41,8 @@ impl SchemaValidator {
     /// Returns `Ok(())` if valid, or `Err(Vec<String>)` with human-readable
     /// validation error messages.
     pub fn validate_response(&self, response_body: &str) -> std::result::Result<(), Vec<String>> {
-        let value: Value = serde_json::from_str(response_body).map_err(|e| {
-            vec![format!("response is not valid JSON: {e}")]
-        })?;
+        let value: Value = serde_json::from_str(response_body)
+            .map_err(|e| vec![format!("response is not valid JSON: {e}")])?;
 
         let errors: Vec<String> = self
             .validator
@@ -140,9 +139,7 @@ impl Transformer for SchemaEnforcementTransformer {
 /// Convenience constructor for adding schema enforcement to a transformer chain.
 ///
 /// Returns an `Arc<dyn Transformer>` suitable for `TransformerChain::with_transformer`.
-pub fn schema_enforcement_transform(
-    schema_path: impl AsRef<Path>,
-) -> Result<Arc<dyn Transformer>> {
+pub fn schema_enforcement_transform(schema_path: impl AsRef<Path>) -> Result<Arc<dyn Transformer>> {
     let transformer = SchemaEnforcementTransformer::from_file(schema_path)?;
     Ok(Arc::new(transformer))
 }

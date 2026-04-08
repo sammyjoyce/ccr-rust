@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -959,7 +960,7 @@ async fn adaptive_backoff_per_tier_configuration() {
     // Use a request body WITHOUT comma in model name to test tier cascading
     // (comma triggers direct routing which bypasses tier cascade)
     let request_body = json!({
-        "model": "claude-3-5",
+        "model": "claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "hello"}],
         "max_tokens": 100
     });

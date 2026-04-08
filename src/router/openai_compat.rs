@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // OpenAI Chat Completions compatibility layer.
 //
 // Converts between Anthropic format and OpenAI chat completions format.

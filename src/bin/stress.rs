@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! CCR Stress Test Binary
 //!
 //! Scales the CCR proxy to 200+ concurrent streams and measures performance,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Built-in concrete transformer implementations.
 //!
 //! These transformers handle format conversions between various LLM API formats

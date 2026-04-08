@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Kimi K2 (Moonshot) API transformer.
 //!
 //! This transformer extracts Unicode think tokens (◁think▷...◁/think▷)

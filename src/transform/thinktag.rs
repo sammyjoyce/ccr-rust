@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Think tag transformer module.
 //!
 //! Strips thinking/reasoning tags from response text content.

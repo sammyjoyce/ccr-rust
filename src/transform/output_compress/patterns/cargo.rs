@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 const COMPILING_PREFIX: &str = "Compiling ";
 const TEST_RESULT_PREFIX: &str = "test result:";
 const CMAKE_PREFIX: &str = "-- ";

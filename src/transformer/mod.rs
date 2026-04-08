@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Request/response transformer module for CCR-Rust.
 //!
 //! Transformers modify requests before sending to providers and responses
@@ -351,7 +352,7 @@ mod tests {
 
     fn test_request() -> Value {
         serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
         })
@@ -514,7 +515,7 @@ mod tests {
     fn anthropic_to_openai_converts_string_system() {
         let transformer = AnthropicToOpenaiTransformer;
         let request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "system": "You are a helpful assistant.",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 1000
@@ -537,7 +538,7 @@ mod tests {
     fn anthropic_to_openai_converts_array_system() {
         let transformer = AnthropicToOpenaiTransformer;
         let request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "system": [
                 {"type": "text", "text": "First instruction"},
                 {"type": "text", "text": "Second instruction"}
@@ -565,7 +566,7 @@ mod tests {
     fn anthropic_to_openai_system_creates_messages_if_missing() {
         let transformer = AnthropicToOpenaiTransformer;
         let request = serde_json::json!({
-            "model": "claude-3",
+            "model": "claude-sonnet-4-6",
             "system": "You are helpful",
             "max_tokens": 1000
         });

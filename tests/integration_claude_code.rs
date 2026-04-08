@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests for Claude Code frontend.
 //!
 //! These tests verify the end-to-end flow for Claude Code (Anthropic) format
@@ -27,11 +28,11 @@ fn make_test_config(mock_url: &str) -> String {
                 "name": "mock",
                 "api_base_url": mock_url,
                 "api_key": "test-key",
-                "models": ["claude-3-opus"]
+                "models": ["claude-sonnet-4-6"]
             }
         ],
         "Router": {
-            "default": "mock,claude-3-opus"
+            "default": "mock,claude-sonnet-4-6"
         },
         "API_TIMEOUT_MS": 5000
     });
@@ -62,7 +63,7 @@ fn build_app(config: ccr_rust::config::Config) -> Router {
 /// Helper to create Anthropic-style request body.
 fn anthropic_request_body() -> serde_json::Value {
     json!({
-        "model": "claude-3-opus",
+        "model": "claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "Hello, Claude"}],
         "max_tokens": 1000
     })
@@ -97,17 +98,17 @@ fn skip_if_localhost_bind_unavailable(test_name: &str) -> bool {
 
 #[test]
 fn test_claude_code_request_detection_by_headers() {
-    // Test detection via Anthropic-specific headers
+    // Test detection via Anthropic-specific headers (anthropic-client-id → ClaudeCode)
     let mut headers = axum::http::HeaderMap::new();
     headers.insert("anthropic-client-id", "test-client".parse().unwrap());
 
     let body = json!({
-        "model": "claude-3-opus",
+        "model": "claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "Hello"}]
     });
 
     let detected = detect_frontend(&headers, &body);
-    assert_eq!(detected, FrontendType::Codex);
+    assert_eq!(detected, FrontendType::ClaudeCode);
 }
 
 #[test]
@@ -128,7 +129,7 @@ fn test_claude_code_request_detection_by_format() {
     let headers = axum::http::HeaderMap::new();
 
     let body = json!({
-        "model": "claude-3-opus-20240229",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 1024,
         "messages": [{"role": "human", "content": "Hello"}]
     });
@@ -145,7 +146,7 @@ fn test_claude_code_request_detection_by_anthropic_specific_format() {
     let headers = axum::http::HeaderMap::new();
 
     let body = json!({
-        "model": "claude-3-opus-20240229",
+        "model": "claude-sonnet-4-6",
         "anthropic_version": "2023-06-01",
         "messages": [{"role": "user", "content": "Hello"}]
     });
@@ -161,7 +162,7 @@ fn test_claude_code_request_detection_by_system_field() {
     let headers = axum::http::HeaderMap::new();
 
     let body = json!({
-        "model": "claude-3-opus",
+        "model": "claude-sonnet-4-6",
         "system": "You are Claude, a helpful AI assistant.",
         "messages": [{"role": "user", "content": "Hello"}]
     });
@@ -188,7 +189,7 @@ fn test_claude_code_detection_codex_user_agent_precedence() {
     headers.insert("user-agent", "codex-cli/1.0.0".parse().unwrap());
 
     let body = json!({
-        "model": "claude-3-opus",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 1024,
         "messages": [{"role": "user", "content": "Hello"}]
     });
@@ -215,7 +216,7 @@ async fn test_claude_code_passthrough_basic_request() {
             "id": "resp_123",
             "object": "chat.completion",
             "created": 1234567890,
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -288,7 +289,7 @@ async fn test_claude_code_passthrough_with_system_prompt() {
             "id": "resp_456",
             "object": "chat.completion",
             "created": 1234567890,
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -315,7 +316,7 @@ async fn test_claude_code_passthrough_with_system_prompt() {
     let app = build_app(config);
 
     let request_body = json!({
-        "model": "mock,claude-3-opus",
+        "model": "mock,claude-sonnet-4-6",
         "system": "You are a helpful assistant.",
         "messages": [{"role": "user", "content": "Please acknowledge my system prompt."}],
         "max_tokens": 1000
@@ -358,7 +359,7 @@ async fn test_claude_code_passthrough_streaming() {
             "id": "chunk_1",
             "object": "chat.completion.chunk",
             "created": 1234567890,
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "choices": [{
                 "index": 0,
                 "delta": {"role": "assistant"},
@@ -369,7 +370,7 @@ async fn test_claude_code_passthrough_streaming() {
             "id": "chunk_2",
             "object": "chat.completion.chunk",
             "created": 1234567890,
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "choices": [{
                 "index": 0,
                 "delta": {"content": "Hello from streaming!"},
@@ -398,7 +399,7 @@ async fn test_claude_code_passthrough_streaming() {
     let app = build_app(config);
 
     let request_body = json!({
-        "model": "mock,claude-3-opus",
+        "model": "mock,claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "Stream a response"}],
         "max_tokens": 1000,
         "stream": true
@@ -627,7 +628,7 @@ async fn test_claude_code_thinking_empty_reasoning_skipped() {
             "id": "resp_no_thinking",
             "object": "chat.completion",
             "created": 1234567890,
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -655,7 +656,7 @@ async fn test_claude_code_thinking_empty_reasoning_skipped() {
     let app = build_app(config);
 
     let request_body = json!({
-        "model": "mock,claude-3-opus",
+        "model": "mock,claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "Say something"}],
         "max_tokens": 1000
     });
@@ -785,7 +786,7 @@ async fn test_claude_code_end_to_end_with_tier_retries() {
             "id": "resp_success",
             "object": "chat.completion",
             "created": 1234567890,
-            "model": "claude-3-opus",
+            "model": "claude-sonnet-4-6",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -809,11 +810,11 @@ async fn test_claude_code_end_to_end_with_tier_retries() {
                 "name": "mock",
                 "api_base_url": mock_server.uri(),
                 "api_key": "test-key",
-                "models": ["claude-3-opus"]
+                "models": ["claude-sonnet-4-6"]
             }
         ],
         "Router": {
-            "default": "mock,claude-3-opus",
+            "default": "mock,claude-sonnet-4-6",
             "tierRetries": {
                 "tier-0": {
                     "max_retries": 3,
@@ -834,7 +835,7 @@ async fn test_claude_code_end_to_end_with_tier_retries() {
     let app = build_app(cfg);
 
     let request_body = json!({
-        "model": "mock,claude-3-opus",
+        "model": "mock,claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "Test retry"}],
         "max_tokens": 1000
     });

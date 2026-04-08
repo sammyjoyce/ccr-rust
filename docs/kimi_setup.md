@@ -1,8 +1,7 @@
 # Kimi (ccr-kimi) Setup
 
 ccr-kimi routes through ccr-rust to Moonshot's **Kimi K2.5** model using the
-native Anthropic protocol at `api.kimi.com/coding/v1`. It runs as AlphaHENG
-backend tier 3.
+native Anthropic protocol at `api.kimi.com/coding/v1`.
 
 ## Prerequisites
 
@@ -63,8 +62,8 @@ Check latency metrics:
 curl http://127.0.0.1:3456/v1/latencies
 ```
 
-## How AlphaHENG Uses ccr-kimi
+## How ccr-kimi Integrates with Claude Code
 
-AlphaHENG routes through Claude Code CLI with `ANTHROPIC_BASE_URL` overridden
+Claude Code CLI routes through ccr-rust with `ANTHROPIC_BASE_URL` overridden
 to `https://api.kimi.com/coding/`. Kimi checks `User-Agent` for coding agent
 identity, and Claude Code natively passes this check.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests for Codex streaming conversion when upstream is OpenAI-compatible SSE.
 
 use axum::body::{to_bytes, Body};

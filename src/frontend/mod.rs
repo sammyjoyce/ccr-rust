@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Frontend detection and routing module.
 //!
 //! This module provides the [`Frontend`] trait for implementing API format frontends
@@ -114,7 +115,7 @@ pub struct Usage {
 /// representation, and the router works with this normalized format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InternalRequest {
-    /// The model identifier (may include provider prefix like "anthropic,claude-3-opus")
+    /// The model identifier (may include provider prefix like "anthropic,claude-sonnet-4-6")
     pub model: String,
     /// The conversation messages
     pub messages: Vec<Message>,
@@ -335,7 +336,7 @@ mod tests {
             id: "msg_123".to_string(),
             response_type: "message".to_string(),
             role: "assistant".to_string(),
-            model: "claude-3-opus".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             content: vec![ContentBlock::Text {
                 text: "Hello!".to_string(),
             }],
