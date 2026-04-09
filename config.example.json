@@ -60,12 +60,35 @@
                 ]
             },
             "tier_name": "ccr-qwen"
+        },
+        {
+            "name": "wafer",
+            "_comment": "Wafer Unlimited — optimized Qwen3.5-397B-A17B. Flat rate, no per-token cost.",
+            "api_base_url": "https://pass.wafer.ai/v1",
+            "api_key": "${WAFER_API_KEY}",
+            "models": [
+                "Qwen3.5-397B-A17B"
+            ],
+            "transformer": {
+                "use": [
+                    "anthropic",
+                    [
+                        "toolcompress",
+                        {
+                            "level": "medium"
+                        }
+                    ],
+                    "output_compress"
+                ]
+            },
+            "tier_name": "ccr-wafer"
         }
     ],
     "Router": {
-        "default": "deepseek,deepseek-reasoner",
+        "default": "wafer,Qwen3.5-397B-A17B",
         "background": "deepseek,deepseek-chat",
         "tiers": [
+            "wafer,Qwen3.5-397B-A17B",
             "deepseek,deepseek-reasoner",
             "minimax,MiniMax-M2.7",
             "openrouter,openrouter/aurora-alpha"

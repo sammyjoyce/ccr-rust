@@ -235,16 +235,15 @@ pub struct Provider {
     #[serde(default)]
     pub extra_headers: Option<std::collections::HashMap<String, String>>,
 
-    /// When true (default), proactively skip this tier if upstream reports
-    /// `X-RateLimit-Remaining: 0` on a successful response.  Set to false
-    /// for providers like Z.AI that include rate-limit headers on every 200
-    /// as informational warnings without actually rejecting at quota zero.
-    #[serde(default = "default_honor_ratelimit_headers")]
+    /// When true, proactively skip this tier if upstream reports
+    /// `X-RateLimit-Remaining: 0` on a successful response.
+    ///
+    /// **Default: `false`** — most providers either don't send rate-limit
+    /// headers on 200 responses, or send them as informational warnings
+    /// that don't reflect actual quota enforcement.  Only set to `true`
+    /// for providers where you've verified the headers are accurate.
+    #[serde(default)]
     pub honor_ratelimit_headers: bool,
-}
-
-fn default_honor_ratelimit_headers() -> bool {
-    true
 }
 
 impl Provider {

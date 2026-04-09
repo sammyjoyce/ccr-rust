@@ -19,7 +19,9 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::metrics::{FrontendMetrics, TierLatency, TierTokenDrift, TierUsage, UsageSummary};
+use crate::metrics::{
+    FrontendMetrics, TierLatency, TierThroughput, TierTokenDrift, TierUsage, UsageSummary,
+};
 
 /// Aggregated dashboard data fetched from the CCR-Rust API.
 #[derive(Debug, Clone)]
@@ -32,6 +34,8 @@ pub struct DashboardData {
     pub token_drifts: Vec<TierTokenDrift>,
     /// Per-frontend metrics
     pub frontend_metrics: Vec<FrontendMetrics>,
+    /// Per-tier throughput metrics (TTFT + tok/s)
+    pub throughput: Vec<TierThroughput>,
     /// When the data was last updated
     pub last_updated: Instant,
 }
@@ -96,6 +100,14 @@ pub fn spawn_dashboard_fetcher(host: String, port: u16) -> SharedDashboardState 
                 .ok()
                 .and_then(|r| r.json().ok());
 
+            // Fetch throughput metrics (TTFT + tok/s)
+            let throughput_url = format!("{}/v1/throughput", base_url);
+            let throughput_result: Option<Vec<TierThroughput>> = client
+                .get(&throughput_url)
+                .send()
+                .ok()
+                .and_then(|r| r.json().ok());
+
             // Update shared state if we got usage data (the core metric)
             if let Some(usage) = usage_result {
                 let dashboard_data = DashboardData {
@@ -103,6 +115,7 @@ pub fn spawn_dashboard_fetcher(host: String, port: u16) -> SharedDashboardState 
                     latencies: latencies_result.unwrap_or_default(),
                     token_drifts: drift_result.unwrap_or_default(),
                     frontend_metrics: frontend_result.unwrap_or_default(),
+                    throughput: throughput_result.unwrap_or_default(),
                     last_updated: Instant::now(),
                 };
 
@@ -129,6 +142,7 @@ struct UiState {
     tier_usages: Vec<TierUsage>,
     tier_latencies: Vec<TierLatency>,
     frontend_metrics: Vec<FrontendMetrics>,
+    throughput: Vec<TierThroughput>,
     last_update: Option<Instant>,
     error: Option<String>,
     /// Global stats from the server (not local atomics)
@@ -204,6 +218,7 @@ fn sync_ui_state(shared: &SharedDashboardState, ui_state: &mut UiState) {
                 ui_state.tier_latencies = data.latencies.clone();
                 ui_state.tier_usages = data.usage.tiers.clone();
                 ui_state.frontend_metrics = data.frontend_metrics.clone();
+                ui_state.throughput = data.throughput.clone();
                 ui_state.last_update = Some(data.last_updated);
                 ui_state.error = None;
                 // Extract global stats from the fetched UsageSummary
@@ -546,17 +561,22 @@ fn create_tier_stats_table(state: &UiState) -> Table<'_> {
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Cell::from("Requests (Success/Fail)").style(
+        Cell::from("TTFT (ms)").style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("tok/s").style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("Requests (S/F)").style(
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
         Cell::from("Tokens (In/Out)").style(
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Cell::from("Avg Duration (s)").style(
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -573,9 +593,17 @@ fn create_tier_stats_table(state: &UiState) -> Table<'_> {
         .map(|l| (l.tier.clone(), l.ewma_seconds))
         .collect();
 
+    // Build a throughput lookup map
+    let throughput_map: std::collections::HashMap<String, &TierThroughput> = state
+        .throughput
+        .iter()
+        .map(|t| (t.tier.clone(), t))
+        .collect();
+
     let rows: Vec<Row> = if state.tier_usages.is_empty() {
         vec![Row::new(vec![
             Cell::from("No tier data available"),
+            Cell::from(""),
             Cell::from(""),
             Cell::from(""),
             Cell::from(""),
@@ -603,6 +631,40 @@ fn create_tier_stats_table(state: &UiState) -> Table<'_> {
                     Style::default().fg(Color::Green)
                 };
                 let latency_cell = Cell::from(format!("{:.1}", ewma_ms)).style(latency_style);
+
+                // TTFT (avg, in ms)
+                let ttft_cell = if let Some(tp) = throughput_map.get(&usage.tier) {
+                    let ttft_ms = tp.avg_ttft_seconds * 1000.0;
+                    let ttft_style = if ttft_ms > 5000.0 {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    } else if ttft_ms > 2000.0 {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::Green)
+                    };
+                    Cell::from(format!("{:.0}", ttft_ms)).style(ttft_style)
+                } else {
+                    Cell::from("—").style(Style::default().fg(Color::Gray))
+                };
+
+                // tok/s (avg)
+                let tps_cell = if let Some(tp) = throughput_map.get(&usage.tier) {
+                    let tps = tp.avg_tokens_per_second;
+                    let tps_style = if tps >= 60.0 {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else if tps >= 20.0 {
+                        Style::default().fg(Color::Green)
+                    } else if tps >= 5.0 {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::Red)
+                    };
+                    Cell::from(format!("{:.1}", tps)).style(tps_style)
+                } else {
+                    Cell::from("—").style(Style::default().fg(Color::Gray))
+                };
 
                 // Requests (Success/Fail)
                 let success = usage.requests.saturating_sub(usage.failures);
@@ -632,15 +694,13 @@ fn create_tier_stats_table(state: &UiState) -> Table<'_> {
                     format_number(usage.output_tokens)
                 ));
 
-                // Avg Duration
-                let duration_cell = Cell::from(format!("{:.2}", usage.avg_duration_seconds));
-
                 Row::new(vec![
                     tier_cell,
                     latency_cell,
+                    ttft_cell,
+                    tps_cell,
                     requests_cell,
                     tokens_cell,
-                    duration_cell,
                 ])
                 .height(1)
             })
@@ -654,11 +714,12 @@ fn create_tier_stats_table(state: &UiState) -> Table<'_> {
     Table::new(
         rows,
         [
-            Constraint::Percentage(15),
-            Constraint::Percentage(20),
+            Constraint::Percentage(14),
+            Constraint::Percentage(14),
+            Constraint::Percentage(12),
+            Constraint::Percentage(10),
             Constraint::Percentage(25),
             Constraint::Percentage(25),
-            Constraint::Percentage(15),
         ],
     )
     .header(header)

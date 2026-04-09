@@ -9,6 +9,9 @@ pub struct StreamVerifyCtx {
     pub local_estimate: u64,
     pub ratelimit_tracker: Option<Arc<RateLimitTracker>>,
     pub rate_limit_info: Option<(Option<u32>, Option<Instant>)>,
+    /// Instant when the upstream HTTP response headers were received.
+    /// Used to measure TTFT (time from response start to first content token).
+    pub stream_start: Instant,
 }
 
 /// Parsed SSE frame with `event` and combined multi-line `data`.

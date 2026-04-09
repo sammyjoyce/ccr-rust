@@ -541,22 +541,16 @@ async fn upstream_429_returns_structured_rate_limit_payload() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        resp.headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok()),
-        Some("17")
-    );
 
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
+    // With tier cascade, the 429 triggers backoff on the only tier; the
+    // all-tiers-exhausted path returns a normalized rate-limit error body.
     assert_eq!(payload["error"]["type"], "rate_limit_error");
     assert_eq!(payload["error"]["code"], "rate_limited");
-    assert_eq!(payload["error"]["retry_after"], 17);
-    assert_eq!(payload["error"]["message"], "Please slow down");
 }
 
 #[tokio::test]

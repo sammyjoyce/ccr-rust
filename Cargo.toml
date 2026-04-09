@@ -63,7 +63,7 @@ name = "concurrent_streams"
 harness = false
 
 [features]
-default = []
+default = ["dashboard"]
 dashboard = ["reqwest/blocking"]
 
 [profile.release]

@@ -3,7 +3,7 @@
 //
 // These handlers serve JSON and Prometheus-text responses for
 // /v1/usage, /v1/token-drift, /v1/token-audit, /v1/frontend-metrics,
-// /metrics, and /v1/latencies.
+// /v1/throughput, /metrics, and /v1/latencies.
 
 use axum::response::IntoResponse;
 use axum::Json;
@@ -16,12 +16,13 @@ use std::sync::atomic::Ordering;
 use crate::routing::EwmaTracker;
 
 use super::{
-    get_hist_offset, merge_histogram_offsets, PreRequestAuditEntry, ACTIVE_REQUESTS,
-    ACTIVE_STREAMS, AUDIT_LOG, CACHE_CREATION_TOKENS_TOTAL, CACHE_READ_TOKENS_TOTAL,
-    FAILURES_TOTAL, FRONTEND_REQUESTS_TOTAL, FRONTEND_REQUEST_LATENCY, INPUT_TOKENS_TOTAL,
-    METRIC_FRONTEND_REQUEST_DURATION_SECONDS, METRIC_REQUEST_DURATION_SECONDS, OUTPUT_TOKENS_TOTAL,
-    REQUESTS_TOTAL, REQUEST_DURATION, TOKEN_DRIFT_STATE, TOTAL_FAILURES, TOTAL_INPUT_TOKENS,
-    TOTAL_OUTPUT_TOKENS, TOTAL_REQUESTS,
+    get_hist_offset, get_throughput_state, merge_histogram_offsets, PreRequestAuditEntry,
+    ThroughputSample, ACTIVE_REQUESTS, ACTIVE_STREAMS, AUDIT_LOG, CACHE_CREATION_TOKENS_TOTAL,
+    CACHE_READ_TOKENS_TOTAL, FAILURES_TOTAL, FRONTEND_REQUESTS_TOTAL, FRONTEND_REQUEST_LATENCY,
+    INPUT_TOKENS_TOTAL, METRIC_FRONTEND_REQUEST_DURATION_SECONDS, METRIC_OUTPUT_TOKENS_PER_SECOND,
+    METRIC_REQUEST_DURATION_SECONDS, METRIC_TTFT_SECONDS, OUTPUT_TOKENS_PER_SECOND,
+    OUTPUT_TOKENS_TOTAL, REQUESTS_TOTAL, REQUEST_DURATION, TOKEN_DRIFT_STATE, TOTAL_FAILURES,
+    TOTAL_INPUT_TOKENS, TOTAL_OUTPUT_TOKENS, TOTAL_REQUESTS, TTFT_SECONDS,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -351,6 +352,154 @@ pub async fn frontend_metrics_handler() -> impl IntoResponse {
     metrics_list.sort_by(|a, b| a.frontend.cmp(&b.frontend));
 
     Json(metrics_list)
+}
+
+/// Per-tier throughput summary returned by /v1/throughput.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TierThroughput {
+    pub tier: String,
+    /// Number of completed streaming requests with throughput data.
+    pub samples: u64,
+    /// Average TTFT (time to first token) in seconds.
+    pub avg_ttft_seconds: f64,
+    /// p50 TTFT from Prometheus histogram (approximate).
+    pub p50_ttft_seconds: f64,
+    /// p90 TTFT from Prometheus histogram (approximate).
+    pub p90_ttft_seconds: f64,
+    /// p99 TTFT from Prometheus histogram (approximate).
+    pub p99_ttft_seconds: f64,
+    /// Average output throughput in tokens/sec.
+    pub avg_tokens_per_second: f64,
+    /// p50 tok/s from Prometheus histogram (approximate).
+    pub p50_tokens_per_second: f64,
+    /// Recent samples (last N per tier).
+    pub recent: Vec<ThroughputSample>,
+}
+
+/// Extract approximate percentile from a Prometheus histogram.
+/// Uses linear interpolation within buckets.
+fn histogram_percentile(metric: &prometheus::proto::Metric, quantile: f64) -> f64 {
+    let h = metric.get_histogram();
+    let count = h.get_sample_count() as f64;
+    if count == 0.0 {
+        return 0.0;
+    }
+    let target = quantile * count;
+    let buckets = h.get_bucket();
+    let mut prev_count = 0.0;
+    let mut prev_bound = 0.0;
+    for bucket in buckets {
+        let cum = bucket.cumulative_count() as f64;
+        let bound = bucket.upper_bound();
+        if cum >= target {
+            // Linear interpolation within this bucket
+            let bucket_count = cum - prev_count;
+            if bucket_count > 0.0 {
+                let fraction = (target - prev_count) / bucket_count;
+                return prev_bound + fraction * (bound - prev_bound);
+            }
+            return bound;
+        }
+        prev_count = cum;
+        prev_bound = bound;
+    }
+    h.get_sample_sum() / count // fallback: return mean
+}
+
+/// Handler for GET /v1/throughput - returns per-tier TTFT and tok/s metrics.
+pub async fn throughput_handler() -> impl IntoResponse {
+    let mut tiers: HashMap<String, TierThroughput> = HashMap::new();
+    let throughput_state = get_throughput_state();
+
+    // Collect TTFT histogram data
+    let ttft_metrics: Vec<prometheus::proto::MetricFamily> = TTFT_SECONDS.collect();
+    for mf in &ttft_metrics {
+        for m in mf.get_metric() {
+            for label in m.get_label() {
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
+                    let h = m.get_histogram();
+                    let mut count = h.get_sample_count();
+                    let mut sum = h.get_sample_sum();
+                    if let Some(offset) = get_hist_offset(METRIC_TTFT_SECONDS, &[("tier", &tier)]) {
+                        count += offset.sample_count;
+                        sum += offset.sample_sum;
+                    }
+                    let recent = throughput_state
+                        .get(&tier)
+                        .map(|s| s.iter().cloned().collect())
+                        .unwrap_or_default();
+                    let entry = tiers.entry(tier.clone()).or_insert_with(|| TierThroughput {
+                        tier,
+                        samples: 0,
+                        avg_ttft_seconds: 0.0,
+                        p50_ttft_seconds: 0.0,
+                        p90_ttft_seconds: 0.0,
+                        p99_ttft_seconds: 0.0,
+                        avg_tokens_per_second: 0.0,
+                        p50_tokens_per_second: 0.0,
+                        recent,
+                    });
+                    entry.samples = count;
+                    if count > 0 {
+                        entry.avg_ttft_seconds = (sum / count as f64 * 1000.0).round() / 1000.0;
+                        entry.p50_ttft_seconds =
+                            (histogram_percentile(m, 0.5) * 1000.0).round() / 1000.0;
+                        entry.p90_ttft_seconds =
+                            (histogram_percentile(m, 0.9) * 1000.0).round() / 1000.0;
+                        entry.p99_ttft_seconds =
+                            (histogram_percentile(m, 0.99) * 1000.0).round() / 1000.0;
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect tok/s histogram data
+    let tps_metrics: Vec<prometheus::proto::MetricFamily> = OUTPUT_TOKENS_PER_SECOND.collect();
+    for mf in &tps_metrics {
+        for m in mf.get_metric() {
+            for label in m.get_label() {
+                if label.name() == "tier" {
+                    let tier = label.value().to_string();
+                    let h = m.get_histogram();
+                    let mut count = h.get_sample_count();
+                    let mut sum = h.get_sample_sum();
+                    if let Some(offset) =
+                        get_hist_offset(METRIC_OUTPUT_TOKENS_PER_SECOND, &[("tier", &tier)])
+                    {
+                        count += offset.sample_count;
+                        sum += offset.sample_sum;
+                    }
+                    let recent = throughput_state
+                        .get(&tier)
+                        .map(|s| s.iter().cloned().collect())
+                        .unwrap_or_default();
+                    let entry = tiers.entry(tier.clone()).or_insert_with(|| TierThroughput {
+                        tier,
+                        samples: 0,
+                        avg_ttft_seconds: 0.0,
+                        p50_ttft_seconds: 0.0,
+                        p90_ttft_seconds: 0.0,
+                        p99_ttft_seconds: 0.0,
+                        avg_tokens_per_second: 0.0,
+                        p50_tokens_per_second: 0.0,
+                        recent,
+                    });
+                    if count > 0 {
+                        entry.avg_tokens_per_second = (sum / count as f64 * 10.0).round() / 10.0;
+                        entry.p50_tokens_per_second =
+                            (histogram_percentile(m, 0.5) * 10.0).round() / 10.0;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut tier_list: Vec<TierThroughput> = tiers.into_values().collect();
+    tier_list.sort_by(|a, b| a.tier.cmp(&b.tier));
+
+    Json(tier_list)
 }
 
 pub async fn metrics_handler() -> impl IntoResponse {

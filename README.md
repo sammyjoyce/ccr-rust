@@ -1,72 +1,76 @@
 # CCR-Rust
 
-High-throughput multi-protocol LLM router for **Claude Code**, **Codex**, and **OpenAI-compatible** clients.
+High-throughput multi-protocol LLM router for **Claude Code**, **Codex**, **OpenCode**, and any **OpenAI-compatible** client.
 
 Your Claude Code instance hits daily usage limits and you're blocked. CCR-Rust automatically routes to backup providers—Opus, Kimi, Gemini—keeping you unblocked. When limits reset, it routes back to Claude. One endpoint, automatic failover, zero client changes.
 
-CCR-Rust gives you one local endpoint with:
+## Features
 
-- Tiered provider failover,
-- Protocol translation (Anthropic/OpenAI),
-- Observability (Prometheus + TUI),
-- Optional MCP aggregation,
-- Response/tool-output compression for agent workloads.
+- **Automatic failover** — tiered provider cascade on 429/5xx/timeouts
+- **Multi-protocol** — Anthropic and OpenAI APIs behind one endpoint
+- **Cost routing** — send traffic classes (default/think/background) to different models
+- **Observability** — Prometheus metrics, live TUI dashboard, token/latency tracking
+- **MCP aggregation** — optional tool server proxying
+- **Compression** — response and tool-output compression for agent workloads
 
-~15MB binary, low routing overhead, built for high-concurrency agent swarms.
+~15 MB binary, <50 ms P99 routing overhead, built for high-concurrency agent swarms.
 
-## Why teams use it
+## Getting Started
 
-- **Reliability:** automatic tier fallback on 429/5xx/timeouts
-- **Cost control:** route classes of traffic (default/think/background) to different providers/models
-- **Compatibility:** one endpoint for multiple client ecosystems
-- **Visibility:** token/latency/drift metrics and live dashboard
-
-## Quick start
+### 1. Build and install
 
 ```bash
-# Build and install
-cd contrib/ccr-rust
-cargo build --release && cargo install --path . --force
+cargo build --release
+cargo install --path . --force
+```
 
-# Install starter config template
-./scripts/ccr-rust.sh install-config
+### 2. Create a config
 
-# Start router
+```bash
+ccr-rust install-config   # writes ~/.claude-code-router/config.json
+```
+
+Edit the config to add your provider API keys. See [Configuration guide](docs/configuration.md) for the full schema.
+
+### 3. Start the router
+
+```bash
 ccr-rust start
+ccr-rust status       # verify it's running
+```
 
-# Point Claude Code at CCR
+### 4. Point your client at CCR
+
+```bash
+# Claude Code
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
 claude
+
+# Codex
+export OPENAI_BASE_URL=http://127.0.0.1:3456/v1
+codex
+
+# OpenCode
+export OPENAI_BASE_URL=http://127.0.0.1:3456/v1
+opencode
 ```
 
-## Core commands
-
-```bash
-ccr-rust start
-ccr-rust status
-ccr-rust validate
-ccr-rust dashboard
-ccr-rust version
-```
-
-For full command options, see [CLI reference](docs/cli.md).
+Any OpenAI-compatible client works the same way — just set the base URL.
 
 ## API Surface
 
-| Endpoint | Method | Purpose |
-|----------|--------|----------|
-| `/v1/messages` | POST | Anthropic-compatible messages API |
-| `/v1/chat/completions` | POST | OpenAI-compatible chat API |
-| `/v1/responses` | POST | Stream batch responses |
-| `/v1/models` | GET | List available models in config |
-| `/health` | GET | Health check (200 OK if running) |
-| `/metrics` | GET | Prometheus metrics (token counts, latencies, provider drift) |
+| Endpoint               | Method | Purpose                     |
+| ---------------------- | ------ | --------------------------- |
+| `/v1/messages`         | POST   | Anthropic messages API      |
+| `/v1/chat/completions` | POST   | OpenAI chat completions API |
+| `/v1/responses`        | POST   | Stream batch responses      |
+| `/v1/models`           | GET    | List configured models      |
+| `/health`              | GET    | Health check                |
+| `/metrics`             | GET    | Prometheus metrics          |
 
 ## Configuration
 
 CCR-Rust reads `~/.claude-code-router/config.json`. Supports `${ENV_VAR}` substitution.
-
-Starter template:
 
 ```json
 {
@@ -74,44 +78,53 @@ Starter template:
     "default_provider": "claude",
     "backends": {
       "claude": { "type": "anthropic", "api_key": "${ANTHROPIC_API_KEY}" },
-      "opus": { "type": "openai", "api_key": "${OPUS_API_KEY}", "base_url": "..." }
+      "opus": {
+        "type": "openai",
+        "api_key": "${OPUS_API_KEY}",
+        "base_url": "..."
+      }
     }
   }
 }
 ```
 
 For full schema and provider setup, see [Configuration guide](docs/configuration.md).
+For common presets (Claude-only, multi-tier, cost-optimized), see [Presets](docs/presets.md).
 
-## Docs
+### Rate Limiting
 
-Start with the [documentation index](docs/index.md) for task-oriented navigation:
+Rate limiting is handled transparently:
 
-- **Getting started:** [CLI reference](docs/cli.md), [Configuration](docs/configuration.md), [Presets](docs/presets.md), [Deployment](docs/deployment.md), [Troubleshooting](docs/troubleshooting.md)
-- **Integrations:** [Claude Code setup](docs/claude_code_setup.md), [OpenAI SDK setup](docs/openai_sdk_setup.md), [Codex integration](docs/codex_setup.md), [Kimi setup](docs/kimi_setup.md), [Gemini integration](docs/gemini-integration.md)
-- **Operations:** [Observability](docs/observability.md), [Debug capture](docs/debug_capture.md), [Streaming design](docs/streaming_incremental_design.md), [Token optimization](docs/token_optimization.md)
+- **429 responses** cascade to the next tier automatically. The client only sees an error if all tiers are exhausted.
+- **Informational headers** (`X-RateLimit-Remaining: 0` on 200 responses) are ignored by default. Most providers send these as warnings, not actual quota limits. To opt in per provider, set `"honor_ratelimit_headers": true`.
+
+No special client configuration is needed — CCR exhausts all tiers before returning an error.
 
 ## Observability
 
-Prometheus endpoint at `/metrics`:
-
 ```bash
-curl http://localhost:3456/metrics | grep ccr
-```
+# Prometheus metrics
+curl http://localhost:3456/metrics
 
-TUI dashboard:
-
-```bash
+# Live TUI dashboard
 ccr-rust dashboard
 ```
 
-Metrics: token counts (in/out), latencies (p50/p90/p99), provider response times, success rates, circuit-breaker states.
+Tracks: token counts (in/out), latencies (p50/p90/p99), provider success rates, circuit-breaker states, cost per tier.
+
+## Documentation
+
+See [docs/index.md](docs/index.md) for the full documentation index:
+
+- **Setup:** [CLI reference](docs/cli.md) · [Configuration](docs/configuration.md) · [Presets](docs/presets.md) · [Deployment](docs/deployment.md)
+- **Integrations:** [Claude Code](docs/claude_code_setup.md) · [Codex](docs/codex_setup.md) · [OpenAI SDK](docs/openai_sdk_setup.md) · [Kimi](docs/kimi_setup.md) · [Gemini](docs/gemini-integration.md)
+- **Operations:** [Observability](docs/observability.md) · [Debug capture](docs/debug_capture.md) · [Streaming](docs/streaming_incremental_design.md) · [Token optimization](docs/token_optimization.md)
+- **Troubleshooting:** [Common issues](docs/troubleshooting.md)
 
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
 
-**Network service clause:** If you run a modified CCR-Rust as a network service, you must provide source code to service users. This prevents closed-source forks while permitting private modifications.
-
----
+**Network service clause:** Modified versions of CCR-Rust offered as a network service must provide source code to users of that service.
 
 Built for reliability. Made for scale. Join the [discussions](https://github.com/RESMP-DEV/ccr-rust/discussions).

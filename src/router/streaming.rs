@@ -18,7 +18,9 @@ use bytes::Bytes;
 use futures::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::metrics::{increment_active_streams, record_stream_backpressure};
+use crate::metrics::{
+    increment_active_streams, record_stream_backpressure, record_throughput, record_ttft,
+};
 
 /// Stream response with OpenAI -> Anthropic translation.
 pub async fn stream_response_translated(
@@ -42,6 +44,10 @@ pub async fn stream_response_translated(
         let mut _has_reasoning = false;
         let mut input_tokens: u64 = 0;
         let mut output_tokens: u64 = 0;
+        // TTFT/throughput timing: capture when first content token arrives
+        let stream_start = verify_ctx.as_ref().map(|ctx| ctx.stream_start);
+        let mut first_token_time: Option<std::time::Instant> = None;
+        let mut last_token_time: Option<std::time::Instant> = None;
 
         loop {
             tokio::select! {
@@ -70,7 +76,11 @@ pub async fn stream_response_translated(
                                     // Translate to Anthropic events
                                     let events =
                                         translate_stream_chunk_to_anthropic(&chunk, is_first);
+                                    if is_first {
+                                        first_token_time = Some(std::time::Instant::now());
+                                    }
                                     is_first = false;
+                                    last_token_time = Some(std::time::Instant::now());
 
                                     for event in events {
                                         let event_json =
@@ -191,6 +201,22 @@ pub async fn stream_response_translated(
                 );
                 verify_token_usage(&ctx.tier_name, ctx.local_estimate, usage.input_tokens);
             }
+
+            // Record TTFT and throughput metrics
+            let final_output = usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+            let ttft_secs = first_token_time
+                .map(|ft| ft.duration_since(stream_start.unwrap_or(ft)).as_secs_f64())
+                .unwrap_or(0.0);
+            if ttft_secs > 0.0 {
+                record_ttft(&ctx.tier_name, ttft_secs);
+            }
+            if let (Some(ft), Some(lt)) = (first_token_time, last_token_time) {
+                let gen_secs = lt.duration_since(ft).as_secs_f64();
+                if gen_secs > 0.0 && final_output > 0 {
+                    record_throughput(&ctx.tier_name, final_output, gen_secs, ttft_secs);
+                }
+            }
+
             // Clear rate limit backoff and update rate limit state on successful stream completion
             if let Some(ref tracker) = ctx.ratelimit_tracker {
                 if let Some((remaining, reset_at)) = &ctx.rate_limit_info {
@@ -237,6 +263,10 @@ pub async fn stream_anthropic_response_with_tracking(
         let mut input_tokens: u64 = 0;
         let mut output_tokens: u64 = 0;
         let mut accumulated_content_len: usize = 0;
+        // TTFT/throughput timing
+        let stream_start = verify_ctx.stream_start;
+        let mut first_token_time: Option<std::time::Instant> = None;
+        let mut last_token_time: Option<std::time::Instant> = None;
 
         loop {
             tokio::select! {
@@ -271,11 +301,23 @@ pub async fn stream_anthropic_response_with_tracking(
                                     // Also track content length for estimation fallback
                                     if let Some(delta) = event.get("delta") {
                                         if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                            if first_token_time.is_none() && !text.is_empty() {
+                                                first_token_time = Some(std::time::Instant::now());
+                                            }
+                                            if !text.is_empty() {
+                                                last_token_time = Some(std::time::Instant::now());
+                                            }
                                             accumulated_content_len += text.len();
                                         }
                                     }
                                     if let Some(content_block) = event.get("content_block") {
                                         if let Some(text) = content_block.get("text").and_then(|v| v.as_str()) {
+                                            if first_token_time.is_none() && !text.is_empty() {
+                                                first_token_time = Some(std::time::Instant::now());
+                                            }
+                                            if !text.is_empty() {
+                                                last_token_time = Some(std::time::Instant::now());
+                                            }
                                             accumulated_content_len += text.len();
                                         }
                                     }
@@ -352,6 +394,20 @@ pub async fn stream_anthropic_response_with_tracking(
         // Record usage
         record_usage(&tier_name, final_input_tokens, final_output_tokens, 0, 0);
         verify_token_usage(&tier_name, local_estimate, final_input_tokens);
+
+        // Record TTFT and throughput metrics
+        let ttft_secs = first_token_time
+            .map(|ft| ft.duration_since(stream_start).as_secs_f64())
+            .unwrap_or(0.0);
+        if ttft_secs > 0.0 {
+            record_ttft(&tier_name, ttft_secs);
+        }
+        if let (Some(ft), Some(lt)) = (first_token_time, last_token_time) {
+            let gen_secs = lt.duration_since(ft).as_secs_f64();
+            if gen_secs > 0.0 && final_output_tokens > 0 {
+                record_throughput(&tier_name, final_output_tokens, gen_secs, ttft_secs);
+            }
+        }
 
         // Update rate limit state
         if let Some(ref tracker) = verify_ctx.ratelimit_tracker {

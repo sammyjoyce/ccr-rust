@@ -104,13 +104,6 @@ pub struct Message {
     pub tool_call_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-    pub tier: String,
-    pub attempts: usize,
-}
-
 // ============================================================================
 // OpenAI Format Types
 // ============================================================================

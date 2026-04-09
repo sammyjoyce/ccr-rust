@@ -171,6 +171,24 @@ lazy_static! {
     )
     .unwrap();
 
+    // TTFT: Time To First Token (from stream start to first content chunk)
+    static ref TTFT_SECONDS: HistogramVec = register_histogram_vec!(
+        "ccr_ttft_seconds",
+        "Time to first token in seconds per tier",
+        &["tier"],
+        vec![0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0]
+    )
+    .unwrap();
+
+    // Output throughput: tokens per second
+    static ref OUTPUT_TOKENS_PER_SECOND: HistogramVec = register_histogram_vec!(
+        "ccr_output_tokens_per_second",
+        "Output token throughput (tokens/sec) per tier",
+        &["tier"],
+        vec![1.0, 5.0, 10.0, 20.0, 40.0, 60.0, 80.0, 100.0, 150.0, 200.0]
+    )
+    .unwrap();
+
     static ref BPE: tiktoken_rs::CoreBPE = cl100k_base().expect("failed to load cl100k_base tokenizer");
 }
 
@@ -194,6 +212,8 @@ const METRIC_TIER_EWMA_LATENCY_SECONDS: &str = "ccr_tier_ewma_latency_seconds";
 const METRIC_TOKEN_DRIFT_ABSOLUTE: &str = "ccr_token_drift_absolute";
 const METRIC_TOKEN_DRIFT_PCT: &str = "ccr_token_drift_pct";
 const METRIC_TOKEN_DRIFT_ALERTS_TOTAL: &str = "ccr_token_drift_alerts_total";
+const METRIC_TTFT_SECONDS: &str = "ccr_ttft_seconds";
+const METRIC_OUTPUT_TOKENS_PER_SECOND: &str = "ccr_output_tokens_per_second";
 
 const REQUEST_DURATION_BUCKETS: &[f64] = &[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0];
 const PRE_REQUEST_TOKENS_BUCKETS: &[f64] = &[
@@ -375,6 +395,88 @@ pub fn record_rate_limit_hit(tier: &str) {
 /// Persist 429 backoff counter state managed by `ratelimit.rs`.
 pub fn record_rate_limit_backoff(tier: &str) {
     persist_counter_inc(METRIC_RATE_LIMIT_BACKOFFS_TOTAL, &[("tier", tier)], 1.0);
+}
+
+/// Per-tier throughput sample for the /v1/throughput endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughputSample {
+    pub ttft_seconds: f64,
+    pub tokens_per_second: f64,
+    pub output_tokens: u64,
+    pub generation_seconds: f64,
+    pub timestamp: String,
+}
+
+/// Per-tier throughput state: tracks recent samples for the API endpoint.
+static THROUGHPUT_STATE: RwLock<Option<HashMap<String, VecDeque<ThroughputSample>>>> =
+    RwLock::new(None);
+
+/// Maximum number of throughput samples retained per tier.
+const THROUGHPUT_SAMPLES_CAPACITY: usize = 256;
+
+/// Record Time To First Token (TTFT) for a tier.
+///
+/// `ttft_secs` is the wall-clock duration from when the upstream HTTP response
+/// started streaming to when the first content-bearing SSE chunk was received.
+pub fn record_ttft(tier: &str, ttft_secs: f64) {
+    TTFT_SECONDS.with_label_values(&[tier]).observe(ttft_secs);
+    persist_histogram_observe(METRIC_TTFT_SECONDS, &[("tier", tier)], ttft_secs);
+}
+
+/// Record output token throughput (tok/s) for a tier.
+///
+/// `output_tokens` is the number of output tokens generated. `generation_secs`
+/// is the wall-clock duration from first token to last token. `ttft_secs` is
+/// the TTFT for this request (stored alongside for the /v1/throughput endpoint).
+pub fn record_throughput(tier: &str, output_tokens: u64, generation_secs: f64, ttft_secs: f64) {
+    if generation_secs <= 0.0 || output_tokens == 0 {
+        return;
+    }
+    let tok_per_sec = output_tokens as f64 / generation_secs;
+    OUTPUT_TOKENS_PER_SECOND
+        .with_label_values(&[tier])
+        .observe(tok_per_sec);
+    persist_histogram_observe(
+        METRIC_OUTPUT_TOKENS_PER_SECOND,
+        &[("tier", tier)],
+        tok_per_sec,
+    );
+
+    // Store sample for the /v1/throughput API
+    let sample = ThroughputSample {
+        ttft_seconds: ttft_secs,
+        tokens_per_second: (tok_per_sec * 10.0).round() / 10.0,
+        output_tokens,
+        generation_seconds: (generation_secs * 1000.0).round() / 1000.0,
+        timestamp: humantime::format_rfc3339_millis(SystemTime::now()).to_string(),
+    };
+
+    {
+        let mut guard = THROUGHPUT_STATE.write();
+        let state = guard.get_or_insert_with(HashMap::new);
+        let samples = state
+            .entry(tier.to_string())
+            .or_insert_with(|| VecDeque::with_capacity(THROUGHPUT_SAMPLES_CAPACITY));
+        if samples.len() >= THROUGHPUT_SAMPLES_CAPACITY {
+            samples.pop_front();
+        }
+        samples.push_back(sample);
+    }
+
+    info!(
+        tier = tier,
+        output_tokens = output_tokens,
+        ttft_ms = format!("{:.0}", ttft_secs * 1000.0),
+        tok_per_sec = format!("{:.1}", tok_per_sec),
+        generation_ms = format!("{:.0}", generation_secs * 1000.0),
+        "throughput metrics"
+    );
+}
+
+/// Read the current per-tier throughput state for the /v1/throughput handler.
+pub fn get_throughput_state() -> HashMap<String, VecDeque<ThroughputSample>> {
+    let guard = THROUGHPUT_STATE.read();
+    guard.as_ref().cloned().unwrap_or_default()
 }
 
 /// Estimate token count for a JSON value by serializing it to a string and

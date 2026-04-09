@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
@@ -390,10 +389,7 @@ pub(super) async fn try_request_via_openai_protocol(
     if !resp.status().is_success() {
         let status = resp.status();
 
-        // For 429 rate limit, pass through the response to allow proper error handling upstream
-        // This allows the Responses API to return structured rate limit errors to clients
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            // Parse Retry-After header if present
             let retry_after = resp
                 .headers()
                 .get("retry-after")
@@ -401,61 +397,11 @@ pub(super) async fn try_request_via_openai_protocol(
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(std::time::Duration::from_secs);
 
-            // Record the rate limit hit for tracking
             record_rate_limit_hit(tier_name);
             ratelimit_tracker.record_429(tier_name, retry_after);
             record_rate_limit_backoff(tier_name);
 
-            // Pass through the 429 response as-is so it can be handled by response converters
-            let mut builder =
-                axum::response::Response::builder().status(reqwest_status_to_axum(status));
-
-            // Copy headers
-            for (key, value) in resp.headers() {
-                if let Ok(name) = axum::http::HeaderName::from_bytes(key.as_str().as_bytes()) {
-                    if let Ok(val) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                        builder = builder.header(name, val);
-                    }
-                }
-            }
-
-            // Insert x-ccr-tier header
-            builder = builder.header("x-ccr-tier", tier_name);
-
-            let body_bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| TryRequestError::Other(e.into()))?;
-
-            // Normalize the error response body to include required fields like 'code': 'rate_limited'
-            let normalized_body = if let Ok(mut error_json) =
-                serde_json::from_slice::<serde_json::Value>(&body_bytes)
-            {
-                if let Some(error_obj) = error_json.get_mut("error").and_then(|e| e.as_object_mut())
-                {
-                    error_obj.insert(
-                        "type".to_string(),
-                        serde_json::Value::String("rate_limit_error".to_string()),
-                    );
-                    error_obj.insert(
-                        "code".to_string(),
-                        serde_json::Value::String("rate_limited".to_string()),
-                    );
-                    if let Some(retry_after_secs) = retry_after {
-                        error_obj.insert(
-                            "retry_after".to_string(),
-                            serde_json::json!(retry_after_secs.as_secs()),
-                        );
-                    }
-                }
-                serde_json::to_vec(&error_json).unwrap_or(body_bytes.to_vec())
-            } else {
-                body_bytes.to_vec()
-            };
-
-            return builder.body(Body::from(normalized_body)).map_err(|e| {
-                TryRequestError::Other(anyhow::anyhow!("Failed to build response: {}", e))
-            });
+            return Err(TryRequestError::RateLimited(retry_after));
         }
 
         let body = resp
@@ -479,6 +425,7 @@ pub(super) async fn try_request_via_openai_protocol(
             local_estimate,
             ratelimit_tracker: Some(ratelimit_tracker.clone()),
             rate_limit_info: Some(rate_limit_info),
+            stream_start: std::time::Instant::now(),
         };
         Ok(
             stream_response_translated(
@@ -651,7 +598,7 @@ pub(super) async fn try_request_via_anthropic_protocol(
     if !resp.status().is_success() {
         let status = resp.status();
 
-        // For 429 rate limit, pass through the response to allow proper error handling upstream
+        // For 429 rate limit, propagate as error to enable tier cascade
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             let retry_after = resp
                 .headers()
@@ -660,61 +607,11 @@ pub(super) async fn try_request_via_anthropic_protocol(
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(std::time::Duration::from_secs);
 
-            // Record the rate limit hit for tracking
             record_rate_limit_hit(tier_name);
             ratelimit_tracker.record_429(tier_name, retry_after);
             record_rate_limit_backoff(tier_name);
 
-            // Pass through the 429 response as-is
-            let mut builder =
-                axum::response::Response::builder().status(reqwest_status_to_axum(status));
-
-            // Copy headers
-            for (key, value) in resp.headers() {
-                if let Ok(name) = axum::http::HeaderName::from_bytes(key.as_str().as_bytes()) {
-                    if let Ok(val) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                        builder = builder.header(name, val);
-                    }
-                }
-            }
-
-            // Insert x-ccr-tier header
-            builder = builder.header("x-ccr-tier", tier_name);
-
-            let body_bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| TryRequestError::Other(e.into()))?;
-
-            // Normalize the error response body to include required fields like 'code': 'rate_limited'
-            let normalized_body = if let Ok(mut error_json) =
-                serde_json::from_slice::<serde_json::Value>(&body_bytes)
-            {
-                if let Some(error_obj) = error_json.get_mut("error").and_then(|e| e.as_object_mut())
-                {
-                    error_obj.insert(
-                        "type".to_string(),
-                        serde_json::Value::String("rate_limit_error".to_string()),
-                    );
-                    error_obj.insert(
-                        "code".to_string(),
-                        serde_json::Value::String("rate_limited".to_string()),
-                    );
-                    if let Some(retry_after_secs) = retry_after {
-                        error_obj.insert(
-                            "retry_after".to_string(),
-                            serde_json::json!(retry_after_secs.as_secs()),
-                        );
-                    }
-                }
-                serde_json::to_vec(&error_json).unwrap_or(body_bytes.to_vec())
-            } else {
-                body_bytes.to_vec()
-            };
-
-            return builder.body(Body::from(normalized_body)).map_err(|e| {
-                TryRequestError::Other(anyhow::anyhow!("Failed to build response: {}", e))
-            });
+            return Err(TryRequestError::RateLimited(retry_after));
         }
 
         let body = resp
@@ -737,6 +634,7 @@ pub(super) async fn try_request_via_anthropic_protocol(
             local_estimate,
             ratelimit_tracker: Some(ratelimit_tracker.clone()),
             rate_limit_info: Some(rate_limit_info),
+            stream_start: std::time::Instant::now(),
         };
 
         let mut response =

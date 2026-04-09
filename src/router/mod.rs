@@ -159,11 +159,12 @@ pub async fn handle_messages(
     let tool_values: Option<Vec<serde_json::Value>> = request.tools.clone();
 
     // Try each tier with retries
+    let mut any_rate_limited = false;
     for (tier, tier_name) in ordered.iter() {
         let honor_remaining = config
             .resolve_provider(tier)
             .map(|p| p.honor_ratelimit_headers)
-            .unwrap_or(true);
+            .unwrap_or(false);
         if state
             .ratelimit_tracker
             .should_skip_tier(tier_name, honor_remaining)
@@ -232,6 +233,7 @@ pub async fn handle_messages(
                 Err(TryRequestError::RateLimited(retry_after)) => {
                     timer.finish_failure();
                     sync_ewma_gauge(&state.ewma_tracker);
+                    any_rate_limited = true;
                     warn!(
                         "Rate limited on {} attempt {} (retry-after: {:?})",
                         tier_name,
@@ -278,13 +280,37 @@ pub async fn handle_messages(
         .map(|(_, tier_name)| config.get_tier_retry(tier_name).max_retries + 1)
         .sum();
     error!("All tiers exhausted after {} tier(s)", ordered.len());
-    let error_resp = ErrorResponse {
-        error: "All backend tiers failed".to_string(),
-        tier: "all".to_string(),
-        attempts: total_attempts,
-    };
 
-    (StatusCode::SERVICE_UNAVAILABLE, Json(error_resp)).into_response()
+    if any_rate_limited {
+        // At least one tier was rate-limited: return 429 so downstream
+        // clients (OpenCode, Codex CLI) use their standard retry logic.
+        let error_resp = serde_json::json!({
+            "error": {
+                "type": "rate_limit_error",
+                "message": format!(
+                    "All {} backend tier(s) exhausted after {} total attempt(s)",
+                    ordered.len(),
+                    total_attempts
+                ),
+                "code": "rate_limited"
+            }
+        });
+        (StatusCode::TOO_MANY_REQUESTS, Json(error_resp)).into_response()
+    } else {
+        // Pure backend failures (5xx, timeouts) — return 503.
+        let error_resp = serde_json::json!({
+            "error": {
+                "type": "server_error",
+                "message": format!(
+                    "All {} backend tier(s) failed after {} total attempt(s)",
+                    ordered.len(),
+                    total_attempts
+                ),
+                "code": "service_unavailable"
+            }
+        });
+        (StatusCode::SERVICE_UNAVAILABLE, Json(error_resp)).into_response()
+    }
 }
 
 // ============================================================================
