@@ -92,12 +92,12 @@ enum Commands {
     #[cfg(feature = "dashboard")]
     /// Launch interactive TUI dashboard
     Dashboard {
-        /// Tracker host
-        #[arg(long, default_value = "127.0.0.1")]
+        /// Tracker host (override with CCR_DASHBOARD_HOST env var)
+        #[arg(long, env = "CCR_DASHBOARD_HOST", default_value = "127.0.0.1")]
         host: String,
 
-        /// Tracker port
-        #[arg(short, long, default_value = "3456")]
+        /// Tracker port (override with CCR_DASHBOARD_PORT env var)
+        #[arg(short, long, env = "CCR_DASHBOARD_PORT", default_value = "3456")]
         port: u16,
     },
     /// Show version and build info

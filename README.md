@@ -106,7 +106,7 @@ No special client configuration is needed — CCR exhausts all tiers before retu
 # Prometheus metrics
 curl http://localhost:3456/metrics
 
-# Live TUI dashboard
+# Live TUI dashboard (auto-connects to hub after `source scripts/connect-hub.sh`)
 ccr-rust dashboard
 ```
 

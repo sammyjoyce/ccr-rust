@@ -17,6 +17,7 @@ To persist dashboard and metrics state across restarts, configure Redis in `conf
 ```
 
 When enabled, CCR-Rust restores:
+
 - counters and gauges used by `/metrics`,
 - histogram offsets used for latency/token distributions,
 - `/v1/token-drift` aggregate state,
@@ -82,22 +83,30 @@ ccr_token_drift_pct{tier="tier-0"}            # Local vs upstream accuracy
 
 ## API Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /v1/usage` | Aggregate token usage per tier (JSON) |
-| `GET /v1/latencies` | Real-time EWMA latency stats (JSON) |
-| `GET /v1/token-drift` | Token estimation accuracy per tier |
-| `GET /v1/token-audit` | Recent pre-request token breakdowns |
-| `GET /metrics` | Prometheus scrape endpoint |
-| `GET /health` | Health check |
+| Endpoint              | Description                           |
+| --------------------- | ------------------------------------- |
+| `GET /v1/usage`       | Aggregate token usage per tier (JSON) |
+| `GET /v1/latencies`   | Real-time EWMA latency stats (JSON)   |
+| `GET /v1/token-drift` | Token estimation accuracy per tier    |
+| `GET /v1/token-audit` | Recent pre-request token breakdowns   |
+| `GET /metrics`        | Prometheus scrape endpoint            |
+| `GET /health`         | Health check                          |
 
 ## Terminal Dashboard (TUI)
 
 CCR-Rust includes an interactive dashboard for real-time monitoring:
 
 ```bash
-ccr-rust dashboard --port 3456
+ccr-rust dashboard                                # localhost:3456
+ccr-rust dashboard --host 10.0.0.5 --port 3456    # remote server
+
+# Hub mode (auto-connects via env vars after sourcing connect-hub.sh):
+source scripts/connect-hub.sh
+ccr-rust dashboard                                # connects to hub, no flags needed
 ```
+
+The dashboard reads `CCR_DASHBOARD_HOST` and `CCR_DASHBOARD_PORT` environment variables,
+falling back to `127.0.0.1:3456` when unset.
 
 ### Layout
 
@@ -132,11 +141,12 @@ ccr-rust dashboard --port 3456
 
 ## Token Drift Verification
 
-CCR-Rust estimates token counts *before* dispatching requests (using tiktoken's `cl100k_base`) and compares against upstream-reported usage.
+CCR-Rust estimates token counts _before_ dispatching requests (using tiktoken's `cl100k_base`) and compares against upstream-reported usage.
 
 ### Why This Matters
 
 If your local token estimates are off, you might:
+
 - Route to the wrong tier (e.g., `longContext` threshold not triggered)
 - Exceed provider limits unexpectedly
 - Underestimate costs
@@ -146,17 +156,20 @@ If your local token estimates are off, you might:
 The `/v1/token-drift` endpoint returns:
 
 ```json
-[{
-  "tier": "tier-0",
-  "samples": 150,
-  "cumulative_drift_pct": 2.3,
-  "last_drift_pct": 1.8
-}]
+[
+  {
+    "tier": "tier-0",
+    "samples": 150,
+    "cumulative_drift_pct": 2.3,
+    "last_drift_pct": 1.8
+  }
+]
 ```
 
 ### Alerts
 
 Drift alerts are automatic:
+
 - **Warning**: >10% cumulative drift
 - **Critical**: >25% cumulative drift
 
@@ -183,6 +196,7 @@ Tiers with fewer than 3 samples keep their configured priority—no premature re
 ### Adaptive Backoff
 
 Retry delays are scaled by the tier's EWMA latency:
+
 - Fast tiers get shorter backoffs (retry quickly)
 - Degraded tiers back off longer (avoid pile-on)
 
