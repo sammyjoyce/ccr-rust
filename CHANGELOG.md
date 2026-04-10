@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-09
+
+### Changed
+
+- **BREAKING: 429 pass-through instead of internal tier cascade** — When a provider returns
+  HTTP 429 (rate limited), ccr-rust now passes the response through to the client with
+  normalized error body (`type: "rate_limit_error"`, `code: "rate_limited"`) and upstream
+  headers intact, plus an `x-ccr-tier` header identifying which tier was rate-limited.
+  Previously, ccr-rust silently cascaded to the next tier internally. This change enables
+  external orchestrators (like AlphaHENG's AdaptiveRouter) to make informed routing decisions
+  with accurate rate-limit signal. OSS users relying on the internal cascade should implement
+  client-side retry logic or configure their proxy to retry on 429.
+
+- **`honor_ratelimit_headers` default changed to `true`** — Per-provider setting now defaults
+  to `true`, meaning ccr-rust proactively skips tiers that report `X-RateLimit-Remaining: 0`
+  on successful responses. Set to `false` for providers (like Z.AI) that send informational
+  rate-limit headers without actually enforcing them.
+
+- **All-tiers-exhausted response simplified to 503** — Since 429s are now passed through at
+  the dispatch layer, the "all tiers exhausted" path only fires for non-rate-limit failures
+  (5xx, timeouts) and consistently returns HTTP 503 with `server_error` type.
+
 ## [1.2.0] - 2026-04-07
 
 ### Added

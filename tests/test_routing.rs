@@ -541,6 +541,18 @@ async fn upstream_429_returns_structured_rate_limit_payload() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        resp.headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok()),
+        Some("17")
+    );
+    assert_eq!(
+        resp.headers()
+            .get("x-ccr-tier")
+            .and_then(|v| v.to_str().ok()),
+        Some("mock")
+    );
 
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await

@@ -159,12 +159,11 @@ pub async fn handle_messages(
     let tool_values: Option<Vec<serde_json::Value>> = request.tools.clone();
 
     // Try each tier with retries
-    let mut any_rate_limited = false;
     for (tier, tier_name) in ordered.iter() {
         let honor_remaining = config
             .resolve_provider(tier)
             .map(|p| p.honor_ratelimit_headers)
-            .unwrap_or(false);
+            .unwrap_or(true);
         if state
             .ratelimit_tracker
             .should_skip_tier(tier_name, honor_remaining)
@@ -212,6 +211,19 @@ pub async fn handle_messages(
             .await
             {
                 Ok(response) => {
+                    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                        // 429 passthrough is an intentional non-cascading return path,
+                        // but it must be tracked as a failed attempt for EWMA scoring.
+                        timer.finish_failure();
+                        let total_duration = start.elapsed().as_secs_f64();
+                        sync_ewma_gauge(&state.ewma_tracker);
+                        info!(
+                            "Rate-limit passthrough on {} after {:.2}s",
+                            tier_name, total_duration
+                        );
+                        return response;
+                    }
+
                     let attempt_duration = timer.finish_success();
                     let total_duration = start.elapsed().as_secs_f64();
                     record_request_with_frontend(tier_name, frontend);
@@ -231,9 +243,10 @@ pub async fn handle_messages(
                     return response;
                 }
                 Err(TryRequestError::RateLimited(retry_after)) => {
+                    // Note: With 429 pass-through in dispatch, this arm fires
+                    // only for edge cases where dispatch still returns RateLimited.
                     timer.finish_failure();
                     sync_ewma_gauge(&state.ewma_tracker);
-                    any_rate_limited = true;
                     warn!(
                         "Rate limited on {} attempt {} (retry-after: {:?})",
                         tier_name,
@@ -242,7 +255,6 @@ pub async fn handle_messages(
                     );
                     record_failure(tier_name, "rate_limited");
                     record_rate_limit_hit(tier_name);
-                    // Record 429 for backoff tracking
                     state.ratelimit_tracker.record_429(tier_name, retry_after);
                     record_rate_limit_backoff(tier_name);
                     // Skip remaining retries for this tier - move to next
@@ -274,43 +286,26 @@ pub async fn handle_messages(
         }
     }
 
-    // All tiers exhausted
+    // All tiers exhausted — 429s are passed through at the dispatch layer,
+    // so reaching this point means only non-rate-limit failures (5xx, timeouts).
     let total_attempts: usize = ordered
         .iter()
         .map(|(_, tier_name)| config.get_tier_retry(tier_name).max_retries + 1)
         .sum();
     error!("All tiers exhausted after {} tier(s)", ordered.len());
 
-    if any_rate_limited {
-        // At least one tier was rate-limited: return 429 so downstream
-        // clients (OpenCode, Codex CLI) use their standard retry logic.
-        let error_resp = serde_json::json!({
-            "error": {
-                "type": "rate_limit_error",
-                "message": format!(
-                    "All {} backend tier(s) exhausted after {} total attempt(s)",
-                    ordered.len(),
-                    total_attempts
-                ),
-                "code": "rate_limited"
-            }
-        });
-        (StatusCode::TOO_MANY_REQUESTS, Json(error_resp)).into_response()
-    } else {
-        // Pure backend failures (5xx, timeouts) — return 503.
-        let error_resp = serde_json::json!({
-            "error": {
-                "type": "server_error",
-                "message": format!(
-                    "All {} backend tier(s) failed after {} total attempt(s)",
-                    ordered.len(),
-                    total_attempts
-                ),
-                "code": "service_unavailable"
-            }
-        });
-        (StatusCode::SERVICE_UNAVAILABLE, Json(error_resp)).into_response()
-    }
+    let error_resp = serde_json::json!({
+        "error": {
+            "type": "server_error",
+            "message": format!(
+                "All {} backend tier(s) failed after {} total attempt(s)",
+                ordered.len(),
+                total_attempts
+            ),
+            "code": "service_unavailable"
+        }
+    });
+    (StatusCode::SERVICE_UNAVAILABLE, Json(error_resp)).into_response()
 }
 
 // ============================================================================
