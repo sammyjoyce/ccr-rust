@@ -25,6 +25,7 @@ use axum::{
     Json,
 };
 use std::collections::BTreeSet;
+use std::sync::atomic::Ordering;
 use tracing::{error, info, warn};
 
 use crate::frontend::detect_frontend;
@@ -81,6 +82,32 @@ fn strip_search_tags(request: &mut AnthropicRequest) {
     }
 }
 
+fn rate_limit_exhausted_response(
+    retry_after: Option<std::time::Duration>,
+    tier_name: Option<&str>,
+) -> Response {
+    let error_resp = serde_json::json!({
+        "error": {
+            "type": "rate_limit_error",
+            "message": "All candidate backend tiers are currently rate limited",
+            "code": "rate_limited"
+        }
+    });
+
+    let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(error_resp)).into_response();
+    if let Some(retry_after) = retry_after {
+        if let Ok(value) = retry_after.as_secs().to_string().parse() {
+            response.headers_mut().insert("retry-after", value);
+        }
+    }
+    if let Some(tier_name) = tier_name {
+        if let Ok(value) = tier_name.parse() {
+            response.headers_mut().insert("x-ccr-tier", value);
+        }
+    }
+    response
+}
+
 pub async fn handle_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -102,6 +129,7 @@ pub async fn handle_messages(
     }
 
     let mut ordered = state.ewma_tracker.sort_tiers_with_config(&tiers, config);
+    let mut pinned_prefix_len = 0_usize;
 
     // Check if the requested model explicitly targets a specific provider (e.g., "deepseek,deepseek-chat")
     // If so, route directly to that provider instead of cascading through tiers
@@ -116,6 +144,7 @@ pub async fn handle_messages(
             // Move the requested tier to the front
             let target = ordered.remove(pos);
             ordered.insert(0, target);
+            pinned_prefix_len = pinned_prefix_len.max(1);
             info!("Direct routing: {} moved to front", requested_model);
         } else {
             // Requested model not in tiers - try it directly as a single-tier request
@@ -123,6 +152,7 @@ pub async fn handle_messages(
                 .config
                 .backend_abbreviation_with_config(&requested_model);
             ordered = vec![(requested_model.clone(), tier_name)];
+            pinned_prefix_len = pinned_prefix_len.max(1);
             info!("Direct routing: {} (not in tier list)", requested_model);
         }
     } else if config.router().ignore_direct && requested_model.contains(',') {
@@ -138,8 +168,24 @@ pub async fn handle_messages(
         if let Some(ref search_provider) = state.config.router().web_search.search_provider {
             // Prepend search provider as first tier
             ordered.insert(0, (search_provider.clone(), "search".to_string()));
+            pinned_prefix_len = pinned_prefix_len.saturating_add(1);
             tracing::info!("Web search enabled, prepending {}", search_provider);
         }
+    }
+
+    let gp_plan = state.gp_router.as_ref().map(|gp_router| {
+        let active_streams = state.active_streams.load(Ordering::Relaxed);
+        gp_router.plan_rerank(
+            &ordered,
+            &request,
+            config,
+            active_streams,
+            state.max_streams,
+            pinned_prefix_len,
+        )
+    });
+    if let Some(plan) = gp_plan.as_ref() {
+        ordered = plan.ordered.clone();
     }
 
     // Detect frontend type from headers and request
@@ -149,6 +195,10 @@ pub async fn handle_messages(
         "Incoming request for model: {} (frontend: {:?})",
         request.model, frontend
     );
+    let mut saw_rate_limit = false;
+    let mut saw_non_rate_limit_failure = false;
+    let mut retry_after_hint: Option<std::time::Duration> = None;
+    let mut last_rate_limited_tier: Option<String> = None;
 
     // Serialize messages to JSON values once for pre-request token audit
     let msg_values: Vec<serde_json::Value> = request
@@ -168,6 +218,8 @@ pub async fn handle_messages(
             .ratelimit_tracker
             .should_skip_tier(tier_name, honor_remaining)
         {
+            saw_rate_limit = true;
+            last_rate_limited_tier = Some(tier_name.clone());
             tracing::debug!(tier = %tier_name, "Skipping rate-limited tier");
             continue;
         }
@@ -215,6 +267,11 @@ pub async fn handle_messages(
                         // 429 passthrough is an intentional non-cascading return path,
                         // but it must be tracked as a failed attempt for EWMA scoring.
                         timer.finish_failure();
+                        if let (Some(gp_router), Some(plan)) =
+                            (state.gp_router.as_ref(), gp_plan.as_ref())
+                        {
+                            gp_router.record_attempt(plan, tier, attempt, None, config);
+                        }
                         let total_duration = start.elapsed().as_secs_f64();
                         sync_ewma_gauge(&state.ewma_tracker);
                         info!(
@@ -225,6 +282,17 @@ pub async fn handle_messages(
                     }
 
                     let attempt_duration = timer.finish_success();
+                    if let (Some(gp_router), Some(plan)) =
+                        (state.gp_router.as_ref(), gp_plan.as_ref())
+                    {
+                        gp_router.record_attempt(
+                            plan,
+                            tier,
+                            attempt,
+                            Some(attempt_duration),
+                            config,
+                        );
+                    }
                     let total_duration = start.elapsed().as_secs_f64();
                     record_request_with_frontend(tier_name, frontend);
                     record_request_duration_with_frontend(tier_name, total_duration, frontend);
@@ -246,6 +314,18 @@ pub async fn handle_messages(
                     // Note: With 429 pass-through in dispatch, this arm fires
                     // only for edge cases where dispatch still returns RateLimited.
                     timer.finish_failure();
+                    if let (Some(gp_router), Some(plan)) =
+                        (state.gp_router.as_ref(), gp_plan.as_ref())
+                    {
+                        gp_router.record_attempt(plan, tier, attempt, None, config);
+                    }
+                    saw_rate_limit = true;
+                    last_rate_limited_tier = Some(tier_name.clone());
+                    retry_after_hint = match (retry_after_hint, retry_after) {
+                        (Some(current), Some(candidate)) => Some(current.max(candidate)),
+                        (None, some) => some,
+                        (some, None) => some,
+                    };
                     sync_ewma_gauge(&state.ewma_tracker);
                     warn!(
                         "Rate limited on {} attempt {} (retry-after: {:?})",
@@ -262,6 +342,12 @@ pub async fn handle_messages(
                 }
                 Err(TryRequestError::Other(e)) => {
                     timer.finish_failure();
+                    if let (Some(gp_router), Some(plan)) =
+                        (state.gp_router.as_ref(), gp_plan.as_ref())
+                    {
+                        gp_router.record_attempt(plan, tier, attempt, None, config);
+                    }
+                    saw_non_rate_limit_failure = true;
                     sync_ewma_gauge(&state.ewma_tracker);
                     warn!("Failed {} attempt {}: {}", tier_name, attempt + 1, e);
                     record_failure(tier_name, "request_failed");
@@ -286,8 +372,15 @@ pub async fn handle_messages(
         }
     }
 
-    // All tiers exhausted — 429s are passed through at the dispatch layer,
-    // so reaching this point means only non-rate-limit failures (5xx, timeouts).
+    if saw_rate_limit && !saw_non_rate_limit_failure {
+        info!(
+            retry_after = ?retry_after_hint,
+            "All candidate tiers exhausted due to rate limits"
+        );
+        return rate_limit_exhausted_response(retry_after_hint, last_rate_limited_tier.as_deref());
+    }
+
+    // All tiers exhausted due to non-rate-limit failures (5xx, timeouts, etc.).
     let total_attempts: usize = ordered
         .iter()
         .map(|(_, tier_name)| config.get_tier_retry(tier_name).max_retries + 1)

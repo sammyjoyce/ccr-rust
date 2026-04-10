@@ -42,8 +42,10 @@ fn build_app(config: ccr_rust::config::Config) -> Router {
     let state = ccr_rust::router::AppState {
         config,
         ewma_tracker,
+        gp_router: None,
         transformer_registry,
         active_streams,
+        max_streams: 0,
         ratelimit_tracker,
         shutdown_timeout: 30,
         debug_capture: None,

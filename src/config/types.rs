@@ -283,6 +283,90 @@ pub struct WebSearchConfig {
     pub search_provider: Option<String>,
 }
 
+/// Acquisition strategies for the experimental GP reranker.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum GpAcquisitionStrategy {
+    #[default]
+    Ucb,
+    Thompson,
+    Greedy,
+    EpsilonGreedy,
+}
+
+/// Runtime settings for the optional GP-based tier reranker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpRoutingRuntimeConfig {
+    /// Enable GP reranking on top of EWMA ordering.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Maximum number of configured tiers to expose to the GP.
+    #[serde(default = "default_gp_max_candidates")]
+    pub max_candidates: usize,
+
+    /// Number of observations retained in the in-memory training buffer.
+    #[serde(default = "default_gp_buffer_capacity")]
+    pub buffer_capacity: usize,
+
+    /// Minimum observations before the surrogate is fit.
+    #[serde(default = "default_gp_min_observations")]
+    pub min_observations: usize,
+
+    /// Number of new observations between automatic refits. `0` disables
+    /// periodic refits after the initial fit.
+    #[serde(default = "default_gp_refit_interval")]
+    pub refit_interval: usize,
+
+    /// UCB exploration weight when `acquisition = "ucb"`.
+    #[serde(default = "default_gp_ucb_kappa")]
+    pub ucb_kappa: f32,
+
+    /// Nugget (jitter) passed to the GP model.
+    #[serde(default = "default_gp_nugget")]
+    pub nugget: f32,
+
+    /// Optional KPLS dimensionality reduction for the surrogate.
+    #[serde(default)]
+    pub kpls_dim: Option<usize>,
+
+    /// Prior mean used before a fitted model is available.
+    #[serde(default = "default_gp_prior_mean")]
+    pub prior_mean: f32,
+
+    /// Prior variance used before a fitted model is available.
+    #[serde(default = "default_gp_prior_variance")]
+    pub prior_variance: f32,
+
+    /// Acquisition strategy used for reranking.
+    #[serde(default)]
+    pub acquisition: GpAcquisitionStrategy,
+
+    /// Random exploration rate when `acquisition = "epsilonGreedy"`.
+    #[serde(default = "default_gp_epsilon")]
+    pub epsilon: f32,
+}
+
+impl Default for GpRoutingRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_candidates: default_gp_max_candidates(),
+            buffer_capacity: default_gp_buffer_capacity(),
+            min_observations: default_gp_min_observations(),
+            refit_interval: default_gp_refit_interval(),
+            ucb_kappa: default_gp_ucb_kappa(),
+            nugget: default_gp_nugget(),
+            kpls_dim: None,
+            prior_mean: default_gp_prior_mean(),
+            prior_variance: default_gp_prior_variance(),
+            acquisition: GpAcquisitionStrategy::default(),
+            epsilon: default_gp_epsilon(),
+        }
+    }
+}
+
 /// Persistence backend mode.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -378,6 +462,11 @@ pub struct RouterConfig {
     #[serde(default)]
     #[serde(rename = "routingTemperature")]
     pub routing_temperature: Option<f64>,
+
+    /// Optional GP reranker layered on top of the EWMA ordering.
+    #[serde(default)]
+    #[serde(rename = "gpRouting")]
+    pub gp_routing: GpRoutingRuntimeConfig,
 }
 
 /// Per-tier retry limits and backoff configuration.
@@ -516,6 +605,42 @@ fn default_redis_prefix() -> String {
     "ccr-rust:persistence:v1".to_string()
 }
 
+fn default_gp_max_candidates() -> usize {
+    8
+}
+
+fn default_gp_buffer_capacity() -> usize {
+    500
+}
+
+fn default_gp_min_observations() -> usize {
+    40
+}
+
+fn default_gp_refit_interval() -> usize {
+    200
+}
+
+fn default_gp_ucb_kappa() -> f32 {
+    2.0
+}
+
+fn default_gp_nugget() -> f32 {
+    1e-4
+}
+
+fn default_gp_prior_mean() -> f32 {
+    0.5
+}
+
+fn default_gp_prior_variance() -> f32 {
+    0.25
+}
+
+fn default_gp_epsilon() -> f32 {
+    0.1
+}
+
 /// Tests for EWMA-aware backoff scaling.
 #[cfg(test)]
 mod backoff_tests {
@@ -609,5 +734,47 @@ mod backoff_tests {
         // Zero EWMA shouldn't cause division or scaling issues
         let duration = config.backoff_duration_with_ewma(0, Some(0.0));
         assert_eq!(duration.as_millis(), 100); // Falls back to base
+    }
+
+    #[test]
+    fn gp_routing_defaults_disabled() {
+        let router: RouterConfig = serde_json::from_str(
+            r#"{
+            "default": "mock,m"
+        }"#,
+        )
+        .expect("parse RouterConfig");
+
+        assert!(!router.gp_routing.enabled);
+        assert_eq!(router.gp_routing.max_candidates, 8);
+        assert_eq!(router.gp_routing.acquisition, GpAcquisitionStrategy::Ucb);
+    }
+
+    #[test]
+    fn gp_routing_parses_custom_values() {
+        let router: RouterConfig = serde_json::from_str(
+            r#"{
+            "default": "mock,m",
+            "gpRouting": {
+                "enabled": true,
+                "maxCandidates": 6,
+                "minObservations": 12,
+                "refitInterval": 50,
+                "ucbKappa": 1.25,
+                "acquisition": "thompson"
+            }
+        }"#,
+        )
+        .expect("parse RouterConfig");
+
+        assert!(router.gp_routing.enabled);
+        assert_eq!(router.gp_routing.max_candidates, 6);
+        assert_eq!(router.gp_routing.min_observations, 12);
+        assert_eq!(router.gp_routing.refit_interval, 50);
+        assert!((router.gp_routing.ucb_kappa - 1.25).abs() < f32::EPSILON);
+        assert_eq!(
+            router.gp_routing.acquisition,
+            GpAcquisitionStrategy::Thompson
+        );
     }
 }

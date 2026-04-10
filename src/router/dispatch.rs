@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
@@ -186,80 +185,6 @@ pub(super) fn insert_ccr_tier_header(response: &mut Response, tier_name: &str) {
     );
 }
 
-fn should_forward_429_header(name: &axum::http::HeaderName) -> bool {
-    !matches!(
-        name.as_str(),
-        // Hop-by-hop headers (RFC 7230 §6.1)
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-            // Representation headers that become stale when body is normalized
-            | "content-length"
-            | "content-encoding"
-            // Always set by CCR to prevent upstream spoofing/duplication
-            | "x-ccr-tier"
-    )
-}
-
-fn normalize_429_error_body(
-    body_bytes: &[u8],
-    retry_after: Option<std::time::Duration>,
-) -> Vec<u8> {
-    if let Ok(mut error_json) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
-        if let Some(error_obj) = error_json.get_mut("error").and_then(|e| e.as_object_mut()) {
-            error_obj.insert(
-                "type".to_string(),
-                serde_json::Value::String("rate_limit_error".to_string()),
-            );
-            error_obj.insert(
-                "code".to_string(),
-                serde_json::Value::String("rate_limited".to_string()),
-            );
-            if let Some(retry_after_secs) = retry_after {
-                error_obj.insert(
-                    "retry_after".to_string(),
-                    serde_json::json!(retry_after_secs.as_secs()),
-                );
-            }
-        }
-        serde_json::to_vec(&error_json).unwrap_or_else(|_| body_bytes.to_vec())
-    } else {
-        body_bytes.to_vec()
-    }
-}
-
-fn build_429_passthrough_response(
-    status: reqwest::StatusCode,
-    upstream_headers: &reqwest::header::HeaderMap,
-    body_bytes: Vec<u8>,
-    tier_name: &str,
-    retry_after: Option<std::time::Duration>,
-) -> Result<Response, TryRequestError> {
-    let mut builder = axum::response::Response::builder().status(reqwest_status_to_axum(status));
-
-    for (key, value) in upstream_headers {
-        if let Ok(name) = axum::http::HeaderName::from_bytes(key.as_str().as_bytes()) {
-            if !should_forward_429_header(&name) {
-                continue;
-            }
-            if let Ok(val) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                builder = builder.header(name, val);
-            }
-        }
-    }
-
-    builder = builder.header("x-ccr-tier", tier_name);
-
-    let normalized_body = normalize_429_error_body(&body_bytes, retry_after);
-    builder
-        .body(Body::from(normalized_body))
-        .map_err(|e| TryRequestError::Other(anyhow::anyhow!("Failed to build response: {}", e)))
-}
 
 pub(super) fn build_openai_headers(
     provider: &crate::config::Provider,
@@ -466,7 +391,6 @@ pub(super) async fn try_request_via_openai_protocol(
         let status = resp.status();
 
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            // Parse Retry-After header if present
             let retry_after = resp
                 .headers()
                 .get("retry-after")
@@ -474,26 +398,11 @@ pub(super) async fn try_request_via_openai_protocol(
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(std::time::Duration::from_secs);
 
-            // Record the rate limit hit for tracking
             record_rate_limit_hit(tier_name);
             ratelimit_tracker.record_429(tier_name, retry_after);
             record_rate_limit_backoff(tier_name);
 
-            // Preserve headers/body contract while returning 429 directly.
-            let upstream_headers = resp.headers().clone();
-            let body_bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| TryRequestError::Other(e.into()))?
-                .to_vec();
-
-            return build_429_passthrough_response(
-                status,
-                &upstream_headers,
-                body_bytes,
-                tier_name,
-                retry_after,
-            );
+            return Err(TryRequestError::RateLimited(retry_after));
         }
 
         let body = resp
@@ -704,20 +613,7 @@ pub(super) async fn try_request_via_anthropic_protocol(
             ratelimit_tracker.record_429(tier_name, retry_after);
             record_rate_limit_backoff(tier_name);
 
-            let upstream_headers = resp.headers().clone();
-            let body_bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| TryRequestError::Other(e.into()))?
-                .to_vec();
-
-            return build_429_passthrough_response(
-                status,
-                &upstream_headers,
-                body_bytes,
-                tier_name,
-                retry_after,
-            );
+            return Err(TryRequestError::RateLimited(retry_after));
         }
 
         let body = resp

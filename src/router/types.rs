@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::debug_capture::DebugCapture;
+use crate::gp_router::GpRequestRouter;
 use crate::ratelimit::RateLimitTracker;
 use crate::routing::EwmaTracker;
 use crate::transformer::TransformerRegistry;
@@ -54,8 +55,10 @@ impl From<anyhow::Error> for TryRequestError {
 pub struct AppState {
     pub config: Config,
     pub ewma_tracker: Arc<EwmaTracker>,
+    pub gp_router: Option<Arc<GpRequestRouter>>,
     pub transformer_registry: Arc<TransformerRegistry>,
     pub active_streams: Arc<AtomicUsize>,
+    pub max_streams: usize,
     pub ratelimit_tracker: Arc<RateLimitTracker>,
     #[allow(dead_code)]
     pub shutdown_timeout: u64,
