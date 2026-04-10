@@ -6,7 +6,7 @@ Your Claude Code instance hits daily usage limits and you're blocked. CCR-Rust a
 
 ## Features
 
-- **Automatic failover** — tiered provider cascade on 429/5xx/timeouts
+- **Automatic failover** — tiered provider cascade on 5xx/timeouts; 429s pass through to client
 - **Multi-protocol** — Anthropic and OpenAI APIs behind one endpoint
 - **Cost routing** — send traffic classes (default/think/background) to different models
 - **Observability** — Prometheus metrics, live TUI dashboard, token/latency tracking
@@ -93,12 +93,13 @@ For common presets (Claude-only, multi-tier, cost-optimized), see [Presets](docs
 
 ### Rate Limiting
 
-Rate limiting is handled transparently:
+Rate limiting is handled with transparency for orchestrators and clients:
 
-- **429 responses** cascade to the next tier automatically. The client only sees an error if all tiers are exhausted.
-- **Informational headers** (`X-RateLimit-Remaining: 0` on 200 responses) are ignored by default. Most providers send these as warnings, not actual quota limits. To opt in per provider, set `"honor_ratelimit_headers": true`.
+- **429 responses are passed through** with a normalized error body (`type: "rate_limit_error"`, `code: "rate_limited"`) and an `x-ccr-tier` header identifying which provider was rate-limited. The rate limit is still tracked internally for future tier-skipping decisions.
+- **5xx/timeout errors** cascade to the next tier automatically. The client only sees an error if all tiers are exhausted.
+- **Informational headers** (`X-RateLimit-Remaining: 0` on 200 responses) trigger proactive tier-skipping by default. Set `"honor_ratelimit_headers": false` per provider for those (like Z.AI) that send these as informational warnings without actual enforcement.
 
-No special client configuration is needed — CCR exhausts all tiers before returning an error.
+This design works well with external orchestrators (e.g., AlphaHENG's AdaptiveRouter) that need accurate rate-limit signal for intelligent routing. Standalone users should implement client-side retry logic for 429s.
 
 ## Observability
 
