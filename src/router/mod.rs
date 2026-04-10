@@ -211,6 +211,19 @@ pub async fn handle_messages(
             .await
             {
                 Ok(response) => {
+                    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                        // 429 passthrough is an intentional non-cascading return path,
+                        // but it must be tracked as a failed attempt for EWMA scoring.
+                        timer.finish_failure();
+                        let total_duration = start.elapsed().as_secs_f64();
+                        sync_ewma_gauge(&state.ewma_tracker);
+                        info!(
+                            "Rate-limit passthrough on {} after {:.2}s",
+                            tier_name, total_duration
+                        );
+                        return response;
+                    }
+
                     let attempt_duration = timer.finish_success();
                     let total_duration = start.elapsed().as_secs_f64();
                     record_request_with_frontend(tier_name, frontend);
